@@ -13,7 +13,7 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="GitHub Actions"
-                    anchor="right"
+                    anchor="left"
                     icon="/icons/githubActionsToolWindow.svg"
                     factoryClass="com.github.ghactions.ui.ActionsToolWindowFactory"/>
     </extensions>
