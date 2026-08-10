@@ -21,7 +21,25 @@ fun iconForStatus(status: RunStatus?): Icon? = when (status) {
 }
 
 /**
- * 节点渲染。主要信息用常规色，附属信息（分支、时间）用次要色，
+ * 把秒数格式化成紧凑的可读形式：`45s` / `2m 30s` / `1h 5m`。
+ * 只保留两级单位——再细的精度对"这步跑了多久"这个问题没有帮助。
+ */
+internal fun formatDuration(seconds: Long): String = when {
+    seconds < 60 -> "${seconds}s"
+    seconds < 3600 -> {
+        val m = seconds / 60
+        val s = seconds % 60
+        if (s == 0L) "${m}m" else "${m}m ${s}s"
+    }
+    else -> {
+        val h = seconds / 3600
+        val m = (seconds % 3600) / 60
+        if (m == 0L) "${h}h" else "${h}h ${m}m"
+    }
+}
+
+/**
+ * 节点渲染。主要信息用常规色，附属信息（分支、时间、耗时）用次要色，
  * 使一眼扫过去信息层次分明。
  */
 class ActionsTreeCellRenderer : ColoredTreeCellRenderer() {
@@ -56,6 +74,8 @@ class ActionsTreeCellRenderer : ColoredTreeCellRenderer() {
             else -> SimpleTextAttributes.REGULAR_ATTRIBUTES
         }
         append(item.label, mainAttributes)
+
+        item.durationSeconds?.let { append("  ${formatDuration(it)}", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES) }
 
         if (item is RunItem) {
             val run = item.run

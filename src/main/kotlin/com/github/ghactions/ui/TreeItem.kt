@@ -13,6 +13,9 @@ sealed interface TreeItem {
     val id: String
     val label: String
     val status: RunStatus?
+
+    /** 执行耗时（秒）。尚未结束或数据缺失时为 null，渲染时不显示。 */
+    val durationSeconds: Long? get() = null
 }
 
 /**
@@ -35,10 +38,12 @@ data class JobItem(val job: Job) : TreeItem {
     override val id: String get() = "j:${job.id}"
     override val label: String get() = job.name
     override val status: RunStatus get() = job.status
+    override val durationSeconds: Long? get() = job.durationSeconds
 }
 
 data class StepItem(val jobId: Long, val step: Step) : TreeItem {
     override val id: String get() = "s:$jobId:${step.number}"
     override val label: String get() = step.name
     override val status: RunStatus get() = step.status
+    override val durationSeconds: Long? get() = step.durationSeconds
 }

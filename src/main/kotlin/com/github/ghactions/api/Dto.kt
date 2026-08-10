@@ -41,6 +41,8 @@ internal class JobDto {
     @SerializedName("name") var name: String? = null
     @SerializedName("status") var status: String? = null
     @SerializedName("conclusion") var conclusion: String? = null
+    @SerializedName("started_at") var startedAt: String? = null
+    @SerializedName("completed_at") var completedAt: String? = null
     @SerializedName("steps") var steps: List<StepDto>? = null
 }
 
@@ -49,6 +51,8 @@ internal class StepDto {
     @SerializedName("name") var name: String? = null
     @SerializedName("status") var status: String? = null
     @SerializedName("conclusion") var conclusion: String? = null
+    @SerializedName("started_at") var startedAt: String? = null
+    @SerializedName("completed_at") var completedAt: String? = null
 }
 
 private fun parseInstant(raw: String?): Instant =
@@ -57,6 +61,16 @@ private fun parseInstant(raw: String?): Instant =
     } catch (e: Exception) {
         Instant.EPOCH
     }
+
+/** 起止时间都在且合法时返回秒数；尚未结束或时间戳缺失/畸形时返回 null。 */
+private fun durationSeconds(startedAt: String?, completedAt: String?): Long? {
+    if (startedAt == null || completedAt == null) return null
+    return try {
+        java.time.Duration.between(Instant.parse(startedAt), Instant.parse(completedAt)).seconds
+    } catch (e: Exception) {
+        null
+    }
+}
 
 private fun RunDto.toModel(): WorkflowRun? {
     val runId = id ?: return null
@@ -77,6 +91,7 @@ private fun StepDto.toModel(): Step? {
         number = stepNumber,
         name = name.orEmpty(),
         status = RunStatus.from(status, conclusion),
+        durationSeconds = durationSeconds(startedAt, completedAt),
     )
 }
 
@@ -87,6 +102,7 @@ private fun JobDto.toModel(): Job? {
         name = name.orEmpty(),
         status = RunStatus.from(status, conclusion),
         steps = steps.orEmpty().mapNotNull { it.toModel() },
+        durationSeconds = durationSeconds(startedAt, completedAt),
     )
 }
 

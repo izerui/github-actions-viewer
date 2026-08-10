@@ -18,19 +18,21 @@ data class WorkflowRun(
     val updatedAt: Instant,
 )
 
-/** 运行中的一个步骤。 */
+/** 运行中的一个步骤。[durationSeconds] 在尚未结束或缺少时间戳时为 null。 */
 data class Step(
     val number: Int,
     val name: String,
     val status: RunStatus,
+    val durationSeconds: Long? = null,
 )
 
-/** 运行中的一个作业。 */
+/** 运行中的一个作业。[durationSeconds] 在尚未结束或缺少时间戳时为 null。 */
 data class Job(
     val id: Long,
     val name: String,
     val status: RunStatus,
     val steps: List<Step>,
+    val durationSeconds: Long? = null,
 )
 
 /** 树上的一个 run 节点。jobs 为 null 表示尚未加载（该 run 未展开）。 */

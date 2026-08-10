@@ -2,6 +2,7 @@ package com.github.ghactions.api
 
 import com.github.ghactions.model.RunStatus
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -97,6 +98,48 @@ class DtoTest {
         assertEquals("Set up job", job.steps[0].name)
         assertEquals(RunStatus.SUCCESS, job.steps[0].status)
         assertEquals(RunStatus.IN_PROGRESS, job.steps[1].status)
+    }
+
+    @Test
+    fun `解析 job 与 step 的起止时间`() {
+        val json = """
+        {
+          "jobs": [
+            {
+              "id": 88001,
+              "name": "build",
+              "status": "completed",
+              "conclusion": "success",
+              "started_at": "2026-08-10T07:30:00Z",
+              "completed_at": "2026-08-10T07:32:30Z",
+              "steps": [
+                {"number": 1, "name": "Checkout", "status": "completed", "conclusion": "success",
+                 "started_at": "2026-08-10T07:30:05Z", "completed_at": "2026-08-10T07:30:20Z"}
+              ]
+            }
+          ]
+        }
+        """.trimIndent()
+
+        val job = parseJobs(json).single()
+        assertEquals(150L, job.durationSeconds, "job 耗时应为 2 分 30 秒")
+        assertEquals(15L, job.steps.single().durationSeconds, "step 耗时应为 15 秒")
+    }
+
+    @Test
+    fun `缺少起止时间时耗时为 null`() {
+        val json = """{"jobs":[{"id":1,"name":"j","status":"queued","steps":[{"number":1,"name":"s","status":"queued"}]}]}"""
+        val job = parseJobs(json).single()
+        assertNull(job.durationSeconds)
+        assertNull(job.steps.single().durationSeconds)
+    }
+
+    @Test
+    fun `只有开始时间而未结束时耗时为 null`() {
+        val json = """
+        {"jobs":[{"id":1,"name":"j","status":"in_progress","started_at":"2026-08-10T07:30:00Z"}]}
+        """.trimIndent()
+        assertNull(parseJobs(json).single().durationSeconds)
     }
 
     @Test
