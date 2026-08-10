@@ -1,5 +1,6 @@
 package com.github.ghactions.poll
 
+import com.github.ghactions.model.RepoCoordinates
 import com.github.ghactions.model.WorkflowNode
 import java.time.Instant
 
@@ -15,6 +16,7 @@ sealed interface ViewState {
     data class RateLimited(val resetAt: Instant) : ViewState
     data class Error(val message: String) : ViewState
     data class Loaded(
+        val repo: RepoCoordinates,
         val workflows: List<WorkflowNode>,
         val lastUpdated: Instant,
         val degraded: Boolean,

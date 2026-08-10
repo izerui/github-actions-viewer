@@ -85,6 +85,19 @@ class ActionsRowRendererTest {
     }
 
     @Test
+    fun `截断提示行不带状态图标也不占按钮宽度`() {
+        val node = DefaultMutableTreeNode(TruncationNoticeItem(15, "https://github.com/o/r/actions"))
+
+        renderer.hoveredRow = 0
+        val cellRenderer = ActionsTreeCellRenderer()
+        cellRenderer.getTreeCellRendererComponent(tree, node, false, false, true, 0, false)
+        render(node, 0)
+
+        assertEquals(null, cellRenderer.icon, "提示行不是一次运行，不该有状态图标")
+        assertEquals(0, renderer.actionWidth(), "提示行整行可点，不需要右侧按钮")
+    }
+
+    @Test
     fun `非 run 行不占用按钮宽度`() {
         val node = DefaultMutableTreeNode(WorkflowItem("CI", RunStatus.SUCCESS))
 

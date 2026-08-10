@@ -44,6 +44,19 @@ data class JobItem(val job: Job) : TreeItem {
     override val durationSeconds: Long? get() = job.durationSeconds
 }
 
+/**
+ * 树末尾的截断提示，与 workflow 分组平级挂在根下。
+ *
+ * 每轮只拉取最近 [limit] 条运行记录，列表末尾若什么都不说，下方那片空白会让人
+ * 以为数据没加载全。[id] 恒定，因此在差异更新中被复用而非每轮重建。
+ */
+data class TruncationNoticeItem(val limit: Int, val actionsUrl: String) : TreeItem {
+    override val isLeaf: Boolean get() = true
+    override val id: String get() = "notice"
+    override val label: String get() = "仅显示最近 $limit 次运行，在 GitHub 上查看全部 ›"
+    override val status: RunStatus? get() = null
+}
+
 data class StepItem(val jobId: Long, val step: Step) : TreeItem {
     override val isLeaf: Boolean get() = true
     override val id: String get() = "s:$jobId:${step.number}"
