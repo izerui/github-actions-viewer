@@ -53,7 +53,7 @@ data class TruncationNoticeItem(val limit: Int, val actionsUrl: String) : TreeIt
 
 - `ActionsTreeModelTest`：提示行始终是 root 的最后一个子节点；连续两次 `apply` 后该节点是同一实例；传 null 时不出现。
 - `ActionsTreeCellRendererTest`（或现有 renderer 测试）：提示行文案随 `limit` 变化，且不带状态图标。
-- `DtoTest` / `PollingEngineTest` 中构造 `Loaded` 的地方随字段增加而更新。
+- 所有构造 `ViewState.Loaded` 的既有测试随字段增加而更新（编译期即可暴露）。
 
 ## 不做
 
