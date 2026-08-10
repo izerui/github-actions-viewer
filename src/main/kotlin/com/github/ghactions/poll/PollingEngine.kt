@@ -152,12 +152,20 @@ class PollingEngine(
         // 并发拉取各个展开 run 的 jobs。单次 API 往返在慢网络下可达数秒，
         // 串行拉取时「展开 N 个 run」会让一轮耗时线性叠加到几十秒，
         // 面板长时间停在旧数据上，看起来就像卡死了。
-        val jobsResults = coroutineScope {
-            visibleRuns
-                .filter { it.id in expanded }
-                .map { run -> run.id to async { client.listJobs(repo, run.id) } }
-                .map { (runId, deferred) -> runId to deferred.await() }
-        }
+        //
+        // 但不能无限并发：用户可能展开十几二十个 run，一次性打出那么多并发请求
+        // 会撞上 GitHub 的 secondary rate limit（滥用保护）而被直接拒绝，比慢更糟。
+        // 因此分批进行，每批至多 JOBS_FETCH_CONCURRENCY 个。
+        val jobsResults = visibleRuns
+            .filter { it.id in expanded }
+            .chunked(JOBS_FETCH_CONCURRENCY)
+            .flatMap { batch ->
+                coroutineScope {
+                    batch
+                        .map { run -> run.id to async { client.listJobs(repo, run.id) } }
+                        .map { (runId, deferred) -> runId to deferred.await() }
+                }
+            }
 
         for ((runId, jobsResult) in jobsResults) {
             when (jobsResult) {
@@ -197,6 +205,15 @@ class PollingEngine(
             hasRunning = visibleRuns.any { it.status.isRunning },
             rateLimitRemaining = quota,
         )
+    }
+
+    private companion object {
+        /**
+         * 同时进行的 jobs 请求数上限。
+         * 并发能把「展开 N 个 run」的耗时从累加压成取最慢的一个，
+         * 但并发过猛会撞上 GitHub 的 secondary rate limit，因此分批推进。
+         */
+        const val JOBS_FETCH_CONCURRENCY = 4
     }
 
     private fun untilReset(resetAt: Instant): Duration {
