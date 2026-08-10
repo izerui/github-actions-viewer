@@ -29,7 +29,7 @@ WORKFLOWS
 
 | 项 | 要求 |
 |---|---|
-| IDE | IntelliJ IDEA 2024.2 及以上 |
+| IDE | IntelliJ IDEA 2026.2.x |
 | 认证 | 已安装 [GitHub CLI](https://cli.github.com) 并完成 `gh auth login` |
 | 仓库 | 当前项目的 git remote 指向 `github.com` |
 
@@ -90,8 +90,22 @@ pkill -9 -f idea-sandbox; ./gradlew runIde
 排查问题时，沙箱日志里有两行关键信息：
 
 ```bash
-grep -E "解析到 GitHub 仓库|面板状态" build/idea-sandbox/*/log/idea.log
+grep -E "解析到 GitHub 仓库|面板状态" .intellijPlatform/sandbox/*/*/log/idea.log
 ```
+
+### 关于 SDK
+
+构建默认使用**本机已安装的 IDE** 作为 SDK（`/Applications/IntelliJ IDEA.app`）。
+自 2025.3 起 IDEA Community 不再单独发布 artifact，Gradle 插件转而下载完整安装包
+（macOS 上是 1~2GB 的 .dmg）；直接用本机 IDE 既快，版本也与实际运行环境一致。
+
+指定其他路径：
+
+```bash
+./gradlew runIde -PlocalIdePath="/path/to/IntelliJ IDEA.app"
+```
+
+本机找不到时会自动回落到下载，CI 等环境不受影响。
 
 ### 结构
 

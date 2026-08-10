@@ -23,6 +23,15 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
+/**
+ * 轮询引擎的节奏与状态行为。
+ *
+ * 关于满篇的 `runCurrent()`：唤醒动作（setVisible / requestRefresh /
+ * onExpansionChanged）之后必须补一次，否则被唤醒的协程不会跑到下一个挂起点，
+ * 后续的时间推进与断言全部错位。曾尝试移除，clean 构建下立刻挂掉 13 个用例——
+ * 当时增量构建复用了缓存的测试结果，给出了「可以移除」的假象。
+ * 若要再次尝试精简，务必用 `--rerun-tasks` 或 clean 验证。
+ */
 class PollingEngineTest {
 
     private val repo = RepoCoordinates("octocat", "hello-world")
