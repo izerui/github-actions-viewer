@@ -201,9 +201,11 @@ class PollingEngine(
                 else -> Unit
             }
         }
-        // 折叠的 run 释放缓存，避免长期占用内存
-        lastJobs.keys.retainAll(expanded)
-        lastJobsRunStatus.keys.retainAll(expanded)
+        // 按「这个 run 还在不在列表里」清理缓存，而不是按用户有没有展开它。
+        // 已完成 run 的 jobs 是终态、数据量很小，折叠就丢弃只会让用户每次重新展开
+        // 都干等一轮网络往返。run 滑出最近 N 条之后自然会被清掉，不会无限增长。
+        lastJobs.keys.retainAll(visibleIds)
+        lastJobsRunStatus.keys.retainAll(visibleIds)
 
         val workflows = visibleRuns
             .groupBy { it.workflowName }

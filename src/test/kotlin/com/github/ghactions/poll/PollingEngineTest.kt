@@ -285,6 +285,35 @@ class PollingEngineTest {
     }
 
     @Test
+    fun `折叠再展开已完成的 run 不应重新拉取`() = runTest {
+        // 已完成 run 的 jobs 是终态、数据量很小，缓存该按「这个 run 还在不在列表里」
+        // 清理，而不是按用户有没有展开它。否则每次折叠再展开都要重新干等一轮网络往返。
+        var expanded = setOf(1L)
+        val transport = RecordingTransport({ runsJson("completed", "success") }, { jobsJson })
+        val engine = engineWith(transport, expandedRuns = { expanded })
+
+        backgroundScope.launch { engine.run() }
+        engine.setVisible(true)
+        runCurrent()
+        advanceUntilIdle()
+        assertEquals(1, transport.jobsCalls.get())
+
+        // 折叠
+        expanded = emptySet()
+        advanceTimeBy(PollingSchedule.IDLE)
+        runCurrent()
+
+        // 再次展开——缓存应当还在，不该再发请求
+        expanded = setOf(1L)
+        engine.onExpansionChanged()
+        advanceUntilIdle()
+
+        assertEquals(1, transport.jobsCalls.get(), "折叠再展开不该重新拉取已是终态的 jobs")
+        val loaded = assertInstanceOf(ViewState.Loaded::class.java, engine.state.value)
+        assertEquals(1, loaded.workflows[0].runs[0].jobs?.size, "重新展开后应立刻从缓存显示")
+    }
+
+    @Test
     fun `运行中的 run 每轮都刷新 jobs`() = runTest {
         val transport = RecordingTransport({ runsJson("in_progress", null) }, { jobsJson })
         val engine = engineWith(transport, expandedRuns = { setOf(1L) })
@@ -321,9 +350,11 @@ class PollingEngineTest {
         advanceTimeBy(5.seconds)
         runCurrent()
 
+        // 折叠后停止请求（哪怕它还在运行中），但已拉到的数据保留在缓存里，
+        // 这样重新展开是瞬时的，不必再等一轮网络往返。
         assertEquals(1, transport.jobsCalls.get())
         val loaded = assertInstanceOf(ViewState.Loaded::class.java, engine.state.value)
-        assertEquals(null, loaded.workflows[0].runs[0].jobs)
+        assertEquals(1, loaded.workflows[0].runs[0].jobs?.size, "折叠不该丢弃已拉到的 jobs")
     }
 
     @Test
