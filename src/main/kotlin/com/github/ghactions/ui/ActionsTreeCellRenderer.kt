@@ -61,6 +61,13 @@ class ActionsTreeCellRenderer : ColoredTreeCellRenderer() {
             return
         }
 
+        if (item is LoadingItem) {
+            // 转圈 + 灰色斜体：一眼就知道"在忙"，且不会被误认为是真实内容
+            icon = AnimatedIcon.Default.INSTANCE
+            append(item.label, SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES)
+            return
+        }
+
         icon = iconForStatus(item.status)
 
         // 失败最需要被一眼看到，用主题的错误色；正在跑的加粗表示"活的"；

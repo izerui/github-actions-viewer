@@ -72,6 +72,42 @@ class ActionsTreeVisibilityTest {
     }
 
     @Test
+    fun `jobs 未加载时展开应看到加载中占位`() {
+        val (tree, model) = treeWithModel()
+
+        // jobs = null 表示还没拉过。展开后若什么都不显示，用户分不清
+        // 是正在加载还是这个 run 根本没有 job——必须给出忙碌反馈。
+        model.applyTo(tree, listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), null)))))
+
+        val workflowNode = model.root.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
+        val runNode = workflowNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
+
+        assertEquals(1, runNode.childCount, "应有一个加载中占位节点")
+        val placeholder = (runNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode).userObject
+        assertTrue(placeholder is LoadingItem, "占位节点应为 LoadingItem，实际是 $placeholder")
+        assertTrue(
+            model.swingModel.isLeaf(runNode.getChildAt(0)),
+            "加载中占位自身不该再显示展开箭头",
+        )
+    }
+
+    @Test
+    fun `jobs 加载完成后占位被真实内容替换`() {
+        val (tree, model) = treeWithModel()
+        val jobs = listOf(Job(88, "build", RunStatus.SUCCESS, listOf(Step(1, "Checkout", RunStatus.SUCCESS))))
+
+        model.applyTo(tree, listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), null)))))
+        model.applyTo(tree, listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), jobs)))))
+
+        val workflowNode = model.root.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
+        val runNode = workflowNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
+
+        assertEquals(1, runNode.childCount)
+        val child = (runNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode).userObject
+        assertTrue(child is JobItem, "占位应被真实 job 替换，实际是 $child")
+    }
+
+    @Test
     fun `step 是叶子不应显示展开箭头`() {
         val (tree, model) = treeWithModel()
         val jobs = listOf(Job(88, "build", RunStatus.SUCCESS, listOf(Step(1, "Checkout", RunStatus.SUCCESS))))

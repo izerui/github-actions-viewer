@@ -132,7 +132,10 @@ class ActionsTreeModelTest {
         val model = ActionsTreeModel()
         model.apply(listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419, RunStatus.IN_PROGRESS), null)))))
         val runNode = child(child(model.root, 0), 0)
-        assertEquals(0, runNode.childCount)
+        // jobs 尚未加载时挂的是「正在加载」占位，而不是空——否则用户展开后
+        // 对着一片空白，分不清是在加载还是这个 run 没有 job。
+        assertEquals(1, runNode.childCount)
+        assertTrue(child(runNode, 0).userObject is LoadingItem)
 
         model.apply(
             listOf(
@@ -145,6 +148,7 @@ class ActionsTreeModelTest {
 
         assertSame(runNode, child(child(model.root, 0), 0))
         assertEquals(1, runNode.childCount)
+        assertTrue(child(runNode, 0).userObject is JobItem, "占位应被真实 job 替换")
     }
 
     @Test

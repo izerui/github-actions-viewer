@@ -31,9 +31,13 @@ class ActionsTreeModel {
         syncChildren(root, workflows.map { WorkflowItem(it.name, it.runs.firstOrNull()?.run?.status) }) { node, index ->
             val workflow = workflows[index]
             syncChildren(node, workflow.runs.map { RunItem(it.run) }) { runNode, runIndex ->
-                val jobs = workflow.runs[runIndex].jobs.orEmpty()
-                syncChildren(runNode, jobs.map { JobItem(it) }) { jobNode, jobIndex ->
-                    val job = jobs[jobIndex]
+                val runData = workflow.runs[runIndex]
+                val jobs = runData.jobs
+                // jobs 为 null 表示尚未拉取——挂一个「正在加载」占位，
+                // 让用户展开后立刻有反馈，而不是对着一片空白猜。
+                val children = jobs?.map { JobItem(it) } ?: listOf(LoadingItem(runData.run.id))
+                syncChildren(runNode, children) { jobNode, jobIndex ->
+                    val job = jobs?.getOrNull(jobIndex) ?: return@syncChildren
                     syncChildren(jobNode, job.steps.map { StepItem(job.id, it) }) { _, _ -> }
                 }
             }
@@ -115,9 +119,9 @@ class ActionsTreeModel {
                 }
                 recurse(reused, index)
             } else {
-                // step 是真正的叶子；workflow / run / job 都可能有下一层，
+                // step 与加载占位是真正的叶子；workflow / run / job 都可能有下一层，
                 // 即使此刻尚未加载出来也必须保持可展开（模型已启用 asksAllowsChildren）。
-                val node = DefaultMutableTreeNode(item, item !is StepItem)
+                val node = DefaultMutableTreeNode(item, !item.isLeaf)
                 parent.insert(node, index)
                 swingModel.nodesWereInserted(parent, intArrayOf(index))
                 recurse(node, index)

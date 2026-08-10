@@ -16,6 +16,9 @@ sealed interface TreeItem {
 
     /** 执行耗时（秒）。尚未结束或数据缺失时为 null，渲染时不显示。 */
     val durationSeconds: Long? get() = null
+
+    /** 之下不会再有层级。非叶子即使当前没有子节点也保持可展开。 */
+    val isLeaf: Boolean get() = false
 }
 
 /**
@@ -42,8 +45,20 @@ data class JobItem(val job: Job) : TreeItem {
 }
 
 data class StepItem(val jobId: Long, val step: Step) : TreeItem {
+    override val isLeaf: Boolean get() = true
     override val id: String get() = "s:$jobId:${step.number}"
     override val label: String get() = step.name
     override val status: RunStatus get() = step.status
     override val durationSeconds: Long? get() = step.durationSeconds
+}
+
+/**
+ * 「正在加载」占位。run 的 jobs 要展开后才去拉，在拿到之前树上必须有东西，
+ * 否则用户分不清是正在加载还是这个 run 根本没有 job。
+ */
+data class LoadingItem(val ownerId: Long) : TreeItem {
+    override val isLeaf: Boolean get() = true
+    override val id: String get() = "loading:$ownerId"
+    override val label: String get() = "正在加载…"
+    override val status: RunStatus? get() = null
 }
