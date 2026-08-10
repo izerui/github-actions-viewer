@@ -53,6 +53,42 @@ class ActionsTreeVisibilityTest {
     }
 
     @Test
+    fun `jobs 尚未加载的 run 仍然可以展开`() {
+        val (tree, model) = treeWithModel()
+
+        // jobs = null 表示还没加载——它正是「等用户展开时才去拉」的初始状态
+        model.applyTo(tree, listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), null)))))
+
+        val workflowNode = model.root.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
+        val runNode = workflowNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
+
+        // JTree 默认按「有没有子节点」判定叶子。run 的 jobs 要展开后才拉，
+        // 展开前没有子节点，于是被当成叶子、不显示展开箭头——用户根本无从展开，
+        // 也就永远触发不了拉取。这是个死结，必须让 run 始终可展开。
+        assertTrue(
+            !model.swingModel.isLeaf(runNode),
+            "jobs 未加载的 run 必须仍可展开，否则用户没有展开箭头可点",
+        )
+    }
+
+    @Test
+    fun `step 是叶子不应显示展开箭头`() {
+        val (tree, model) = treeWithModel()
+        val jobs = listOf(Job(88, "build", RunStatus.SUCCESS, listOf(Step(1, "Checkout", RunStatus.SUCCESS))))
+
+        model.applyTo(tree, listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), jobs)))))
+
+        val workflowNode = model.root.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
+        val runNode = workflowNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
+        val jobNode = runNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
+        val stepNode = jobNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
+
+        // 启用 asksAllowsChildren 后，若不区分 step，所有节点都会带上展开箭头
+        assertTrue(model.swingModel.isLeaf(stepNode), "step 之下没有层级，不该显示展开箭头")
+        assertTrue(!model.swingModel.isLeaf(jobNode), "job 之下有 step，应可展开")
+    }
+
+    @Test
     fun `workflow 与其下的 run 都应可见`() {
         val (tree, model) = treeWithModel()
 

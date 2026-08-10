@@ -16,7 +16,16 @@ import javax.swing.tree.TreePath
 class ActionsTreeModel {
 
     val root: DefaultMutableTreeNode = DefaultMutableTreeNode("WORKFLOWS")
-    val swingModel: DefaultTreeModel = DefaultTreeModel(root)
+
+    /**
+     * `asksAllowsChildren = true` 让 JTree 按「是否允许有子节点」判定叶子，
+     * 而不是看「当前有没有子节点」。
+     *
+     * 这一点是必需的：run 的 jobs 要等用户展开时才去拉，展开前它没有子节点。
+     * 若按默认规则，它会被当成叶子而不显示展开箭头——用户无从展开，也就永远
+     * 触发不了拉取，形成死结。
+     */
+    val swingModel: DefaultTreeModel = DefaultTreeModel(root, true)
 
     fun apply(workflows: List<WorkflowNode>) {
         syncChildren(root, workflows.map { WorkflowItem(it.name) }) { node, index ->
@@ -106,7 +115,9 @@ class ActionsTreeModel {
                 }
                 recurse(reused, index)
             } else {
-                val node = DefaultMutableTreeNode(item)
+                // step 是真正的叶子；workflow / run / job 都可能有下一层，
+                // 即使此刻尚未加载出来也必须保持可展开（模型已启用 asksAllowsChildren）。
+                val node = DefaultMutableTreeNode(item, item !is StepItem)
                 parent.insert(node, index)
                 swingModel.nodesWereInserted(parent, intArrayOf(index))
                 recurse(node, index)
