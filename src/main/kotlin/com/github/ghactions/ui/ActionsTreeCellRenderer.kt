@@ -45,10 +45,14 @@ class ActionsTreeCellRenderer : ColoredTreeCellRenderer() {
 
         icon = iconForStatus(item.status)
 
-        val muted = item.status == RunStatus.CANCELLED || item.status == RunStatus.SKIPPED
+        // 失败最需要被一眼看到，用主题的错误色；正在跑的加粗表示"活的"；
+        // 取消与跳过退到次要色，不与真正的失败争夺注意力。
         val mainAttributes = when {
+            item.status == RunStatus.FAILURE -> SimpleTextAttributes.ERROR_ATTRIBUTES
             item is WorkflowItem -> SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES
-            muted -> SimpleTextAttributes.GRAYED_ATTRIBUTES
+            item.status == RunStatus.IN_PROGRESS -> SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES
+            item.status == RunStatus.CANCELLED || item.status == RunStatus.SKIPPED ->
+                SimpleTextAttributes.GRAYED_ATTRIBUTES
             else -> SimpleTextAttributes.REGULAR_ATTRIBUTES
         }
         append(item.label, mainAttributes)

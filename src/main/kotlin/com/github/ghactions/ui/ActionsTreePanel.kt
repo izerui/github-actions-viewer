@@ -11,14 +11,18 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.ToggleAction
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.ui.AnimatedIcon
+import com.intellij.ui.PopupHandler
+import com.intellij.ui.TreeSpeedSearch
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.text.DateFormatUtil
 import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.datatransfer.StringSelection
 import java.awt.event.HierarchyEvent
 import javax.swing.JLabel
 import javax.swing.JPanel
@@ -66,6 +70,8 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
 
         wireExpansionTracking()
         wireVisibilityTracking()
+        wireSpeedSearch()
+        wirePopupMenu()
 
         // 先同步渲染一次当前状态，再订阅后续变化。
         // observe 提交的 EDT 协程要等到调度器空闲才开始 collect，这中间存在一个窗口期；
@@ -89,19 +95,52 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
                     service.engine.setBranchFilter(state)
                 }
             },
-            object : AnAction("在浏览器中打开", "打开选中运行的 GitHub 页面", AllIcons.General.Web) {
-                override fun getActionUpdateThread() = ActionUpdateThread.EDT
-                override fun update(e: AnActionEvent) {
-                    e.presentation.isEnabled = selectedRunUrl() != null
-                }
-                override fun actionPerformed(e: AnActionEvent) {
-                    selectedRunUrl()?.let(::openInBrowser)
-                }
-            },
+            openInBrowserAction(),
         )
         val toolbar = ActionManager.getInstance().createActionToolbar("GitHubActionsViewer", group, true)
         toolbar.targetComponent = tree
         return JPanel(BorderLayout()).apply { add(toolbar.component, BorderLayout.WEST) }
+    }
+
+    /** 「在浏览器中打开」。工具栏与右键菜单共用同一份定义。 */
+    private fun openInBrowserAction(): AnAction =
+        object : AnAction("在浏览器中打开", "打开选中运行的 GitHub 页面", AllIcons.General.Web) {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+            override fun update(e: AnActionEvent) {
+                e.presentation.isEnabled = selectedRunUrl() != null
+            }
+            override fun actionPerformed(e: AnActionEvent) {
+                selectedRunUrl()?.let(::openInBrowser)
+            }
+        }
+
+    /** 「复制链接」。 */
+    private fun copyLinkAction(): AnAction =
+        object : AnAction("复制链接", "复制该次运行的 GitHub 页面地址", AllIcons.Actions.Copy) {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+            override fun update(e: AnActionEvent) {
+                e.presentation.isEnabled = selectedRunUrl() != null
+            }
+            override fun actionPerformed(e: AnActionEvent) {
+                selectedRunUrl()?.let { CopyPasteManager.getInstance().setContents(StringSelection(it)) }
+            }
+        }
+
+    /** 右键菜单。IDEA 里到处都是这种交互，用户不用学。 */
+    private fun wirePopupMenu() {
+        val group = DefaultActionGroup(openInBrowserAction(), copyLinkAction())
+        PopupHandler.installPopupMenu(tree, group, "GitHubActionsViewerPopup")
+    }
+
+    /**
+     * 输入即搜索：在树上直接打字就能定位到对应的 workflow / run / job / step。
+     * 这是 IntelliJ 所有树都具备的标志性手感，用户会下意识地去用。
+     */
+    private fun wireSpeedSearch() {
+        TreeSpeedSearch.installOn(tree, true) { path ->
+            val node = path.lastPathComponent as? DefaultMutableTreeNode
+            (node?.userObject as? TreeItem)?.label.orEmpty()
+        }
     }
 
     /** 展开状态直接驱动 jobs 的按需拉取——用户看什么，才请求什么。 */

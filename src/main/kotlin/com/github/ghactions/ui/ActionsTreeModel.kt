@@ -28,7 +28,7 @@ class ActionsTreeModel {
     val swingModel: DefaultTreeModel = DefaultTreeModel(root, true)
 
     fun apply(workflows: List<WorkflowNode>) {
-        syncChildren(root, workflows.map { WorkflowItem(it.name) }) { node, index ->
+        syncChildren(root, workflows.map { WorkflowItem(it.name, it.runs.firstOrNull()?.run?.status) }) { node, index ->
             val workflow = workflows[index]
             syncChildren(node, workflow.runs.map { RunItem(it.run) }) { runNode, runIndex ->
                 val jobs = workflow.runs[runIndex].jobs.orEmpty()
