@@ -17,6 +17,7 @@ dependencies {
     intellijPlatform {
         intellijIdeaCommunity("2024.2.5")
         bundledPlugin("Git4Idea")
+        bundledModule("intellij.platform.vcs.dvcs.impl")
         instrumentationTools()
     }
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
