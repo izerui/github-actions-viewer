@@ -52,6 +52,9 @@ class PollingEngine(
     private var lastRuns: List<WorkflowRun> = emptyList()
     private val lastJobs = mutableMapOf<Long, List<Job>>()
 
+    /** 缓存 jobs 时该 run 所处的状态，用于识别「刚跑完」这一刻并重取终态。 */
+    private val lastJobsRunStatus = mutableMapOf<Long, com.github.ghactions.model.RunStatus>()
+
     fun setVisible(value: Boolean) {
         val previous = visible.value
         visible.value = value
@@ -156,7 +159,14 @@ class PollingEngine(
         // 不能指望 ETag 兜住这件事：304 虽然不计配额，却仍要走一次完整的网络往返，
         // 在慢网络下同样是数秒。省配额和省延迟是两回事。
         val runsNeedingJobs = visibleRuns.filter { run ->
-            run.id in expanded && (run.status.isRunning || run.id !in lastJobs)
+            run.id in expanded && (
+                run.status.isRunning ||
+                    run.id !in lastJobs ||
+                    // run 刚由运行中转入终态的那一轮，它同时满足「已完成」和「已缓存」。
+                    // 若不在此处补取一次，jobs 会永远停留在运行中的最后一帧——
+                    // run 那行已是绿勾，展开后里面的 step 却还在转圈。
+                    lastJobsRunStatus[run.id] != run.status
+                )
         }
 
         // 剩下的请求并发进行：单次往返在慢网络下可达数秒，串行会让耗时线性叠加。
@@ -176,6 +186,7 @@ class PollingEngine(
             when (jobsResult) {
                 is ApiResult.Data -> {
                     lastJobs[runId] = jobsResult.value
+                    visibleRuns.firstOrNull { it.id == runId }?.let { lastJobsRunStatus[runId] = it.status }
                     jobsResult.rateLimitRemaining?.let { remaining = it }
                 }
 
@@ -192,6 +203,7 @@ class PollingEngine(
         }
         // 折叠的 run 释放缓存，避免长期占用内存
         lastJobs.keys.retainAll(expanded)
+        lastJobsRunStatus.keys.retainAll(expanded)
 
         val workflows = visibleRuns
             .groupBy { it.workflowName }

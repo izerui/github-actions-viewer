@@ -253,6 +253,38 @@ class PollingEngineTest {
     }
 
     @Test
+    fun `run 由运行中转为完成时应再拉一次 jobs 取终态`() = runTest {
+        // 边界：run 刚跑完的那一轮，它同时满足「已完成」和「已缓存」，
+        // 若据此跳过拉取，jobs 就永远停留在运行中的最后一帧——
+        // run 那行显示绿勾，展开后里面的 step 还在转圈。
+        var runStatus = "in_progress"
+        var runConclusion: String? = null
+        val transport = RecordingTransport({ runsJson(runStatus, runConclusion) }, { jobsJson })
+        val engine = engineWith(transport, expandedRuns = { setOf(1L) })
+
+        backgroundScope.launch { engine.run() }
+        engine.setVisible(true)
+        runCurrent()
+        advanceUntilIdle()
+        assertEquals(1, transport.jobsCalls.get())
+
+        // 构建完成
+        runStatus = "completed"
+        runConclusion = "success"
+        advanceTimeBy(PollingSchedule.ACTIVE)
+        runCurrent()
+
+        assertEquals(2, transport.jobsCalls.get(), "状态刚转为完成时必须再取一次终态")
+
+        // 此后状态不再变化，应停止拉取
+        repeat(3) {
+            advanceTimeBy(PollingSchedule.IDLE)
+            runCurrent()
+        }
+        assertEquals(2, transport.jobsCalls.get(), "终态确定后不应再重复拉取")
+    }
+
+    @Test
     fun `运行中的 run 每轮都刷新 jobs`() = runTest {
         val transport = RecordingTransport({ runsJson("in_progress", null) }, { jobsJson })
         val engine = engineWith(transport, expandedRuns = { setOf(1L) })
