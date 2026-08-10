@@ -1,0 +1,20 @@
+<idea-plugin>
+    <id>com.github.ghactions.viewer</id>
+    <name>GitHub Actions Viewer</name>
+    <vendor>serv</vendor>
+    <description><![CDATA[
+        实时查看当前项目的 GitHub Actions 执行状态。
+        以 Workflow → Run → Job → Step 四层树形结构展示，自动刷新。
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.vcs</depends>
+    <depends>Git4Idea</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="GitHub Actions"
+                    anchor="right"
+                    icon="/icons/githubActionsToolWindow.svg"
+                    factoryClass="com.github.ghactions.ui.ActionsToolWindowFactory"/>
+    </extensions>
+</idea-plugin>

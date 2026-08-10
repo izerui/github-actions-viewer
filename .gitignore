@@ -1,5 +1,8 @@
 .gradle/
 build/
 out/
+.intellijPlatform/
 *.log
 .DS_Store
+.idea/
+.kotlin/
