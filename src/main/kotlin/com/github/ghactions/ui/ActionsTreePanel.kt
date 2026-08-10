@@ -10,9 +10,9 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.ToggleAction
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.ui.AnimatedIcon
-import com.intellij.ui.DoubleClickListener
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.treeStructure.Tree
@@ -20,7 +20,6 @@ import com.intellij.util.text.DateFormatUtil
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.event.HierarchyEvent
-import java.awt.event.MouseEvent
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.SwingConstants
@@ -66,7 +65,6 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
         add(statusLabel, BorderLayout.SOUTH)
 
         wireExpansionTracking()
-        wireDoubleClick()
         wireVisibilityTracking()
 
         // 先同步渲染一次当前状态，再订阅后续变化。
@@ -97,7 +95,7 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
                     e.presentation.isEnabled = selectedRunUrl() != null
                 }
                 override fun actionPerformed(e: AnActionEvent) {
-                    selectedRunUrl()?.let(BrowserUtil::browse)
+                    selectedRunUrl()?.let(::openInBrowser)
                 }
             },
         )
@@ -120,22 +118,25 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
         })
     }
 
-    private fun wireDoubleClick() {
-        object : DoubleClickListener() {
-            override fun onDoubleClick(event: MouseEvent): Boolean {
-                val url = selectedRunUrl() ?: return false
-                BrowserUtil.browse(url)
-                return true
-            }
-        }.installOn(tree)
-    }
-
     /** 面板不在屏幕上显示时彻底暂停轮询，重新显示时立即强刷一次。 */
     private fun wireVisibilityTracking() {
         addHierarchyListener { event ->
             if (event.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong() != 0L) {
                 service.engine.setVisible(isShowing)
             }
+        }
+    }
+
+    /**
+     * 唤起外部浏览器必须放到后台线程。
+     *
+     * BrowserUtil.browse 会启动浏览器进程，冷启动可能耗时数秒；在 EDT 上同步调用
+     * 会把整个 IDE 的界面线程占住，表现为点击后彻底卡死。EDT 上不做任何可能阻塞
+     * 的事——启动外部进程正属此列。
+     */
+    private fun openInBrowser(url: String) {
+        ApplicationManager.getApplication().executeOnPooledThread {
+            BrowserUtil.browse(url)
         }
     }
 

@@ -2,6 +2,7 @@ package com.github.ghactions.ui
 
 import com.github.ghactions.poll.ViewState
 import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBPanelWithEmptyText
@@ -34,7 +35,12 @@ object EmptyStatePanel {
                 text.appendLine(
                     "前往安装 GitHub CLI",
                     SimpleTextAttributes.LINK_PLAIN_ATTRIBUTES,
-                ) { BrowserUtil.browse("https://cli.github.com") }
+                ) {
+                    // 同样不能在 EDT 上唤起浏览器——见 ActionsTreePanel.openInBrowser
+                    ApplicationManager.getApplication().executeOnPooledThread {
+                        BrowserUtil.browse("https://cli.github.com")
+                    }
+                }
             }
 
             ViewState.GhNotLoggedIn -> {
