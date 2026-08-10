@@ -149,15 +149,20 @@ class PollingEngine(
         val visibleIds = visibleRuns.mapTo(HashSet()) { it.id }
         val expanded = expandedRuns().intersect(visibleIds)
 
-        // 并发拉取各个展开 run 的 jobs。单次 API 往返在慢网络下可达数秒，
-        // 串行拉取时「展开 N 个 run」会让一轮耗时线性叠加到几十秒，
-        // 面板长时间停在旧数据上，看起来就像卡死了。
-        //
-        // 但不能无限并发：用户可能展开十几二十个 run，一次性打出那么多并发请求
-        // 会撞上 GitHub 的 secondary rate limit（滥用保护）而被直接拒绝，比慢更糟。
-        // 因此分批进行，每批至多 JOBS_FETCH_CONCURRENCY 个。
-        val jobsResults = visibleRuns
-            .filter { it.id in expanded }
+        // 只请求「真正需要」的 jobs：
+        //   - 运行中的 run：状态还在变，每轮都要刷新
+        //   - 尚未缓存过的 run：第一次展开，必须拉一次
+        // 已经拉过的、且已进入终态的 run 直接跳过——它的 jobs 与 steps 不会再变化。
+        // 不能指望 ETag 兜住这件事：304 虽然不计配额，却仍要走一次完整的网络往返，
+        // 在慢网络下同样是数秒。省配额和省延迟是两回事。
+        val runsNeedingJobs = visibleRuns.filter { run ->
+            run.id in expanded && (run.status.isRunning || run.id !in lastJobs)
+        }
+
+        // 剩下的请求并发进行：单次往返在慢网络下可达数秒，串行会让耗时线性叠加。
+        // 但不能无限并发——首次展开十几个 run 时一次性打出那么多请求会撞上
+        // GitHub 的 secondary rate limit（滥用保护），因此分批推进。
+        val jobsResults = runsNeedingJobs
             .chunked(JOBS_FETCH_CONCURRENCY)
             .flatMap { batch ->
                 coroutineScope {

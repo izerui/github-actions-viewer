@@ -227,6 +227,53 @@ class PollingEngineTest {
     }
 
     @Test
+    fun `已完成的 run 只拉一次 jobs 之后不再重复请求`() = runTest {
+        // 已完成 run 的 jobs/steps 是终态，不会再变化，拉一次缓存即可。
+        // 每轮重拉即便命中 ETag 304 也仍要走完整的网络往返——省了配额，省不了延迟。
+        val transport = RecordingTransport({ runsJson("completed", "success") }, { jobsJson })
+        val engine = engineWith(transport, expandedRuns = { setOf(1L) })
+
+        backgroundScope.launch { engine.run() }
+        engine.setVisible(true)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertEquals(1, transport.jobsCalls.get())
+
+        // 再过几轮，不应再请求这个已完成 run 的 jobs
+        repeat(3) {
+            advanceTimeBy(PollingSchedule.IDLE)
+            runCurrent()
+        }
+
+        assertEquals(1, transport.jobsCalls.get())
+        // 缓存仍在，树上依然挂着 jobs
+        val loaded = assertInstanceOf(ViewState.Loaded::class.java, engine.state.value)
+        assertEquals(1, loaded.workflows[0].runs[0].jobs?.size)
+    }
+
+    @Test
+    fun `运行中的 run 每轮都刷新 jobs`() = runTest {
+        val transport = RecordingTransport({ runsJson("in_progress", null) }, { jobsJson })
+        val engine = engineWith(transport, expandedRuns = { setOf(1L) })
+
+        backgroundScope.launch { engine.run() }
+        engine.setVisible(true)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertEquals(1, transport.jobsCalls.get())
+
+        advanceTimeBy(PollingSchedule.ACTIVE)
+        runCurrent()
+        assertEquals(2, transport.jobsCalls.get())
+
+        advanceTimeBy(PollingSchedule.ACTIVE)
+        runCurrent()
+        assertEquals(3, transport.jobsCalls.get())
+    }
+
+    @Test
     fun `折叠后不再拉取该 run 的 jobs`() = runTest {
         var expanded = setOf(1L)
         val transport = RecordingTransport({ runsJson("in_progress", null) }, { jobsJson })
