@@ -30,7 +30,7 @@ class ActionsPollingService(project: Project, private val scope: CoroutineScope)
 
     val engine: PollingEngine = PollingEngine(
         client = GitHubActionsClient(
-            transport = JdkHttpTransport(),
+            transport = JdkHttpTransport(ideProxySelector(), java.net.Authenticator.getDefault()),
             tokenProvider = GhCliTokenProvider(ProcessCommandRunner()),
             etags = etags,
         ),
@@ -39,6 +39,24 @@ class ActionsPollingService(project: Project, private val scope: CoroutineScope)
         branchProvider = { repoProvider.currentBranch() },
         expandedRuns = { expanded.toSet() },
     )
+
+    /**
+     * 只有用户**显式**配置了代理时才走代理，否则直连。
+     *
+     * 不能直接用 ProxySelector.getDefault()：IntelliJ 装在那里的选择器默认是
+     * 「自动检测系统代理」——那是 IDE 的出厂默认值，不代表用户想走代理。
+     * 照单全收会把请求塞进用户根本没打算使用的系统代理里。
+     */
+    private fun ideProxySelector(): java.net.ProxySelector? {
+        val configured = when (com.intellij.util.net.ProxySettings.getInstance().getProxyConfiguration()) {
+            is com.intellij.util.net.ProxyConfiguration.StaticProxyConfiguration,
+            is com.intellij.util.net.ProxyConfiguration.ProxyAutoConfiguration,
+            -> true
+
+            else -> false
+        }
+        return if (configured) java.net.ProxySelector.getDefault() else null
+    }
 
     /** 仓库解析结果只在变化时记录一次，避免每轮刷屏。排查「面板空着」时这是第一手线索。 */
     private fun logRepo(resolved: com.github.ghactions.model.RepoCoordinates?) {

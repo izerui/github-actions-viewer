@@ -22,19 +22,23 @@ fun interface HttpTransport {
     fun get(url: String, headers: Map<String, String>): HttpResponse
 }
 
-class JdkHttpTransport : HttpTransport {
+/**
+ * @param proxySelector 代理选择器；null 表示直连。
+ *   由调用方（IDE 层）根据用户的配置决定——本类刻意不认识 IntelliJ，
+ *   否则整个 api 包就无法用纯 JVM 测试覆盖了。
+ * @param authenticator 代理认证凭据；null 表示不需要认证。
+ */
+class JdkHttpTransport(
+    proxySelector: ProxySelector? = null,
+    authenticator: Authenticator? = null,
+) : HttpTransport {
 
     private val client: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         .followRedirects(HttpClient.Redirect.NORMAL)
-        // 走 IDE 配置的代理。IntelliJ 启动时会把自己的代理选择器装成 JVM 默认，
-        // 但 JDK 的 HttpClient 默认并不使用它——不显式指定就是直连，用户在
-        // Settings 里配的代理形同虚设。有些网络环境只能经代理访问 GitHub，
-        // 不遵从这项配置等于完全不可用。
         .apply {
-            ProxySelector.getDefault()?.let { proxy(it) }
-            // 代理需要认证时，凭据同样由 IDE 管理
-            Authenticator.getDefault()?.let { authenticator(it) }
+            proxySelector?.let { proxy(it) }
+            authenticator?.let { authenticator(it) }
         }
         .build()
 

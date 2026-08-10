@@ -14,7 +14,7 @@
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="GitHub Actions"
                     anchor="right"
-                    icon="AllIcons.Vcs.Vendors.Github"
+                    icon="/icons/githubActionsToolWindow.svg"
                     factoryClass="com.github.ghactions.ui.ActionsToolWindowFactory"/>
     </extensions>
 </idea-plugin>
