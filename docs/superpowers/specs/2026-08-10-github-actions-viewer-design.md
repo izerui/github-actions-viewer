@@ -46,7 +46,7 @@
 | 目标 IDE | IntelliJ IDEA 2024.2+（`since-build 242`） |
 | 并发 | Kotlin Coroutines，使用平台注入的 project 级 `CoroutineScope` |
 | UI | Swing，基于 `com.intellij.ui.treeStructure.Tree` + `AllIcons` / `AnimatedIcon` |
-| JSON | `kotlinx.serialization`，以 `compileOnly` 方式使用 IntelliJ 平台捆绑版本（不自带副本，避免版本冲突） |
+| JSON | Gson（IntelliJ 平台捆绑）。不选 kotlinx.serialization：后者需 Kotlin 编译器插件且运行时版本须与平台捆绑版严格匹配，否则运行期 `NoSuchMethodError` |
 
 ## 5. 架构
 
@@ -194,6 +194,7 @@ GitHub API 的形态：
 
 ```kotlin
 sealed interface ViewState {
+    object Loading              // 首次加载，尚无数据
     object NoGitRemote          // 项目无 GitHub remote
     object GhNotInstalled       // 未安装 gh
     object GhNotLoggedIn        // 未执行 gh auth login
@@ -283,9 +284,12 @@ Run 节点富文本渲染：`#419` 用主色，`· main · 2m ago` 用次要色�
   有运行中 → 5s、全完成 → 60s、不可见 → 停止、恢复 → 立即强刷、
   配额低 → 降级
 
-### 平台测试
+- **树差异更新**：验证刷新后节点对象被**复用**而非替换。节点对象复用正是
+  展开态得以保持的底层机制，因此该测试比启动沙箱 IDE 手工点击更本质。
+  操作 `DefaultTreeModel` 即可，不需要 `JTree` 实例，故仍属纯 JVM 测试。
 
-树的差异更新：刷新后展开态与选中态是否保持。此项需真实 Swing 树验证。
+不编写基于 `BasePlatformTestCase` 的平台测试——所有值得测的逻辑均已下沉至
+无需 IDE 环境的层次。
 
 ### 手动验证
 
