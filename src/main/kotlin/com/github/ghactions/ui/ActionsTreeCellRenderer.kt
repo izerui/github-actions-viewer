@@ -44,6 +44,14 @@ internal fun formatDuration(seconds: Long): String = when {
  */
 class ActionsTreeCellRenderer : ColoredTreeCellRenderer() {
 
+    /** 正在等待 jobs 到达的 run id，由外层在用户点击展开时立即置上。 */
+    var loadingRuns: Set<Long> = emptySet()
+
+    /** 上一次渲染是否画了忙碌图标。 */
+    var showedBusyIcon: Boolean = false
+        private set
+
+
     override fun customizeCellRenderer(
         tree: JTree,
         value: Any?,
@@ -63,11 +71,8 @@ class ActionsTreeCellRenderer : ColoredTreeCellRenderer() {
 
         // 正在加载 jobs 的 run 自己转圈——忙碌反馈出现在用户点击的那个对象身上，
         // 而不是另起一行告知。运行中的 run 本就是转圈图标，两者语义一致，不冲突。
-        icon = if (item is RunItem && item.loadingJobs) {
-            AnimatedIcon.Default.INSTANCE
-        } else {
-            iconForStatus(item.status)
-        }
+        showedBusyIcon = item is RunItem && item.run.id in loadingRuns
+        icon = if (showedBusyIcon) AnimatedIcon.Default.INSTANCE else iconForStatus(item.status)
 
         // 失败最需要被一眼看到，用主题的错误色；正在跑的加粗表示"活的"；
         // 取消与跳过退到次要色，不与真正的失败争夺注意力。

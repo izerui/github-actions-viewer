@@ -132,7 +132,7 @@ class ActionsTreeModelTest {
         val model = ActionsTreeModel()
         model.apply(listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419, RunStatus.IN_PROGRESS), null)))))
         val runNode = child(child(model.root, 0), 0)
-        // jobs 尚未加载时没有子节点；忙碌反馈由 run 自身的图标承担（见 RunItem.loadingJobs）
+        // jobs 尚未加载时没有子节点；忙碌反馈由 run 自身的图标承担（见 ActionsRowRenderer.loadingRuns）
         assertEquals(0, runNode.childCount)
 
         model.apply(

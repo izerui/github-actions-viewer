@@ -53,6 +53,14 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
 
     private var branchFilterEnabled = false
 
+    /**
+     * 已展开但还没拿到 jobs 的 run。
+     *
+     * 必须在用户点击展开的那一刻就置上：轮询要等好几秒才回来，等它回来再标记
+     * 「加载中」已经晚了——那时数据已经到手，标记永远不会为真。
+     */
+    private val pendingRuns = mutableSetOf<Long>()
+
     /** 上一次真正渲染到树上的数据，用于跳过无谓的重建。 */
     private var lastRenderedWorkflows: List<com.github.ghactions.model.WorkflowNode>? = null
 
@@ -187,8 +195,17 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
 
             private fun update(event: TreeExpansionEvent, expanded: Boolean) {
                 val node = event.path.lastPathComponent as? DefaultMutableTreeNode ?: return
-                val item = node.userObject
-                if (item is RunItem) service.setExpanded(item.run.id, expanded)
+                val item = node.userObject as? RunItem ?: return
+                service.setExpanded(item.run.id, expanded)
+
+                // 展开一个还没有子节点的 run —— 数据要等一轮网络往返才到，
+                // 此刻立即让它转圈，用户才知道自己那一下点生效了。
+                if (expanded && node.childCount == 0) {
+                    pendingRuns.add(item.run.id)
+                } else if (!expanded) {
+                    pendingRuns.remove(item.run.id)
+                }
+                applyLoadingIndicator()
             }
         })
     }
@@ -220,6 +237,11 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
         return enclosingRun(node)?.run?.htmlUrl?.ifEmpty { null }
     }
 
+    private fun applyLoadingIndicator() {
+        rowRenderer.loadingRuns = pendingRuns.toSet()
+        tree.repaint()
+    }
+
     private fun render(state: ViewState) {
         if (state is ViewState.Loaded && state.workflows.isNotEmpty()) {
             // 数据没变就别动树。Loaded 每轮都携带新的 lastUpdated，若不加这道判断，
@@ -239,6 +261,13 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
                 expandedPaths.forEach { tree.expandPath(it) }
                 lastRenderedWorkflows = state.workflows
             }
+            // jobs 已到达的 run 停止转圈
+            val arrived = state.workflows.asSequence()
+                .flatMap { it.runs.asSequence() }
+                .filter { it.jobs != null }
+                .map { it.run.id }
+                .toSet()
+            if (pendingRuns.removeAll(arrived)) applyLoadingIndicator()
             cards.show(content, CARD_TREE)
             val ago = DateFormatUtil.formatBetweenDates(state.lastUpdated.toEpochMilli(), System.currentTimeMillis())
             statusLabel.text = if (state.degraded) {

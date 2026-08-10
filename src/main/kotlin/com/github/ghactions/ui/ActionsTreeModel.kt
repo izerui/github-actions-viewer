@@ -30,7 +30,7 @@ class ActionsTreeModel {
     fun apply(workflows: List<WorkflowNode>) {
         syncChildren(root, workflows.map { WorkflowItem(it.name, it.runs.firstOrNull()?.run?.status) }) { node, index ->
             val workflow = workflows[index]
-            syncChildren(node, workflow.runs.map { RunItem(it.run, it.loadingJobs) }) { runNode, runIndex ->
+            syncChildren(node, workflow.runs.map { RunItem(it.run) }) { runNode, runIndex ->
                 val jobs = workflow.runs[runIndex].jobs.orEmpty()
                 syncChildren(runNode, jobs.map { JobItem(it) }) { jobNode, jobIndex ->
                     val job = jobs[jobIndex]

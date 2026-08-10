@@ -75,19 +75,16 @@ class ActionsTreeVisibilityTest {
     fun `正在加载 jobs 的 run 自身显示忙碌图标`() {
         val (tree, model) = treeWithModel()
 
-        // loadingJobs = true 表示用户已展开、正在等 jobs 到达。
-        // 忙碌反馈要出现在用户点击的那个 run 上，而不是另起一行占位。
+        // jobs 尚未到达时不插占位子节点——忙碌反馈由该 run 自身的图标承担
+        // （见 ActionsRowRenderer.loadingRuns，由 UI 在点击展开的那一刻置上）。
         model.applyTo(
             tree,
-            listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), null, loadingJobs = true)))),
+            listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), null)))),
         )
 
         val workflowNode = model.root.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
         val runNode = workflowNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
-        val item = runNode.userObject as RunItem
-
-        assertTrue(item.loadingJobs, "该 run 应处于加载中状态")
-        assertEquals(0, runNode.childCount, "加载中不应再插入占位子节点")
+        assertEquals(0, runNode.childCount, "加载中不应插入占位子节点，忙碌由该行图标表达")
         assertTrue(!model.swingModel.isLeaf(runNode), "加载中的 run 仍须保持可展开")
     }
 
@@ -96,13 +93,12 @@ class ActionsTreeVisibilityTest {
         val (tree, model) = treeWithModel()
         val jobs = listOf(Job(88, "build", RunStatus.SUCCESS, listOf(Step(1, "Checkout", RunStatus.SUCCESS))))
 
-        model.applyTo(tree, listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), null, loadingJobs = true)))))
+        model.applyTo(tree, listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), null)))))
         model.applyTo(tree, listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), jobs)))))
 
         val workflowNode = model.root.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
         val runNode = workflowNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
 
-        assertTrue(!(runNode.userObject as RunItem).loadingJobs, "拿到 jobs 后应停止忙碌指示")
         assertEquals(1, runNode.childCount)
         assertTrue((runNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode).userObject is JobItem)
     }

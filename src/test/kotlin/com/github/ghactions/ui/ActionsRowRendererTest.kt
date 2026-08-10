@@ -32,6 +32,19 @@ class ActionsRowRendererTest {
         renderer.getTreeCellRendererComponent(tree, node, false, false, false, row, false)
 
     @Test
+    fun `标记为加载中的 run 显示忙碌图标`() {
+        val node = runNode()
+
+        renderer.loadingRuns = setOf(1L)
+        render(node, 0)
+        assertTrue(renderer.isShowingBusyIcon, "点击展开的那一刻就该转圈，不能等数据回来才转")
+
+        renderer.loadingRuns = emptySet()
+        render(node, 0)
+        assertTrue(!renderer.isShowingBusyIcon, "数据到达后应恢复为状态图标")
+    }
+
+    @Test
     fun `悬停与否不应改变行宽`() {
         val node = runNode()
 

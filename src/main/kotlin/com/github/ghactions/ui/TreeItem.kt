@@ -31,7 +31,7 @@ data class WorkflowItem(val name: String, val latestStatus: RunStatus? = null) :
     override val status: RunStatus? get() = latestStatus
 }
 
-data class RunItem(val run: WorkflowRun, val loadingJobs: Boolean = false) : TreeItem {
+data class RunItem(val run: WorkflowRun) : TreeItem {
     override val id: String get() = "r:${run.id}"
     override val label: String get() = "#${run.runNumber}"
     override val status: RunStatus get() = run.status

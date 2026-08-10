@@ -35,16 +35,10 @@ data class Job(
     val durationSeconds: Long? = null,
 )
 
-/**
- * 树上的一个 run 节点。
- *
- * [jobs] 为 null 表示尚未加载；[loadingJobs] 表示它已被展开、正在等待 jobs 到达，
- * 此时该 run 自己的图标会转圈——忙碌反馈出现在用户点击的那个对象身上。
- */
+/** 树上的一个 run 节点。[jobs] 为 null 表示尚未加载。 */
 data class RunNode(
     val run: WorkflowRun,
     val jobs: List<Job>?,
-    val loadingJobs: Boolean = false,
 )
 
 /** 树上的一个 workflow 分组。 */

@@ -28,6 +28,18 @@ class ActionsRowRenderer : JPanel(BorderLayout()), TreeCellRenderer {
     /** 当前鼠标所在行，由 TreeHoverListener 更新。-1 表示鼠标不在树上。 */
     var hoveredRow: Int = -1
 
+    /**
+     * 正在等待 jobs 到达的 run。
+     *
+     * 由 UI 在用户点击展开的那一刻立即置上，而不是等轮询回来告知——轮询回来时
+     * 要等的事情已经结束了，那个标记永远不会为真。
+     */
+    var loadingRuns: Set<Long> = emptySet()
+        set(value) {
+            field = value
+            text.loadingRuns = value
+        }
+
     init {
         isOpaque = false
         actionIcon.border = JBUI.Borders.empty(0, 6)
@@ -54,6 +66,9 @@ class ActionsRowRenderer : JPanel(BorderLayout()), TreeCellRenderer {
 
         return this
     }
+
+    /** 上一次渲染是否画的是忙碌图标。供测试断言用。 */
+    val isShowingBusyIcon: Boolean get() = text.showedBusyIcon
 
     /** 右侧按钮占据的宽度，供命中判断使用；该行没有按钮时为 0。 */
     fun actionWidth(): Int = if (actionIcon.isVisible) actionIcon.preferredSize.width else 0

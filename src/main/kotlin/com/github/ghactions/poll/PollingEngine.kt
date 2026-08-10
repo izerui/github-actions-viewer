@@ -209,16 +209,7 @@ class PollingEngine(
 
         val workflows = visibleRuns
             .groupBy { it.workflowName }
-            .map { (name, runs) ->
-                WorkflowNode(
-                    name,
-                    runs.map { run ->
-                        val jobs = lastJobs[run.id]
-                        // 已展开却还没拿到 jobs = 正在加载，让该 run 的图标转圈
-                        RunNode(run, jobs, loadingJobs = jobs == null && run.id in expanded)
-                    },
-                )
-            }
+            .map { (name, runs) -> WorkflowNode(name, runs.map { RunNode(it, lastJobs[it.id]) }) }
             .sortedBy { it.name }
 
         val quota = remaining
