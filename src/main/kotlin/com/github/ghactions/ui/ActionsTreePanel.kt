@@ -45,8 +45,12 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
 
     private var branchFilterEnabled = false
 
+    /** 上一次真正渲染到树上的数据，用于跳过无谓的重建。 */
+    private var lastRenderedWorkflows: List<com.github.ghactions.model.WorkflowNode>? = null
+
     init {
-        tree.isRootVisible = false
+        // 显示 WORKFLOWS 分组标题（渲染器会把根节点画成灰色粗体）
+        tree.isRootVisible = true
         tree.showsRootHandles = true
         tree.cellRenderer = ActionsTreeCellRenderer()
         // 允许在 CellRendererPane 下自我刷新的动画图标（"运行中"转轮）真正转动。
@@ -142,18 +146,23 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
 
     private fun render(state: ViewState) {
         if (state is ViewState.Loaded && state.workflows.isNotEmpty()) {
-            // 视图层通用兜底：apply 前快照展开态，apply 后逐一恢复。
-            // 正常路径下节点实例复用，展开态本就保持，这里是无害的幂等操作；
-            // 但它同时覆盖了 ActionsTreeModel 里节点换位分支（先 remove 后 insert 会让
-            // JTree 丢弃该子树展开态且不派发 treeCollapsed）以及未来任何类似的结构事件路径。
-            // 因为节点实例被复用，快照下来的 TreePath 在 apply 之后依然有效，expandPath 幂等。
-            val expandedPaths = (0 until tree.rowCount)
-                .mapNotNull { tree.getPathForRow(it) }
-                .filter { tree.isExpanded(it) }
+            // 数据没变就别动树。Loaded 每轮都携带新的 lastUpdated，若不加这道判断，
+            // 哪怕 ETag 命中 304、内容一模一样，也会把整棵树重建一遍并触发大量重绘。
+            if (state.workflows != lastRenderedWorkflows) {
+                // 视图层通用兜底：apply 前快照展开态，apply 后逐一恢复。
+                // 正常路径下节点实例复用，展开态本就保持，这里是无害的幂等操作；
+                // 但它同时覆盖了 ActionsTreeModel 里节点换位分支（先 remove 后 insert 会让
+                // JTree 丢弃该子树展开态且不派发 treeCollapsed）等结构事件路径。
+                // 因为节点实例被复用，快照下来的 TreePath 在 apply 之后依然有效，expandPath 幂等。
+                val expandedPaths = (0 until tree.rowCount)
+                    .mapNotNull { tree.getPathForRow(it) }
+                    .filter { tree.isExpanded(it) }
 
-            treeModel.applyTo(tree, state.workflows)
+                treeModel.applyTo(tree, state.workflows)
 
-            expandedPaths.forEach { tree.expandPath(it) }
+                expandedPaths.forEach { tree.expandPath(it) }
+                lastRenderedWorkflows = state.workflows
+            }
             cards.show(content, CARD_TREE)
             val ago = DateFormatUtil.formatBetweenDates(state.lastUpdated.toEpochMilli(), System.currentTimeMillis())
             statusLabel.text = if (state.degraded) {
@@ -162,6 +171,7 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
                 "  最后更新于 $ago"
             }
         } else {
+            lastRenderedWorkflows = null
             emptyHolder.removeAll()
             emptyHolder.add(EmptyStatePanel.forState(state), BorderLayout.CENTER)
             emptyHolder.revalidate()

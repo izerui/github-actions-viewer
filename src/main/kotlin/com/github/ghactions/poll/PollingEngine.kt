@@ -8,7 +8,9 @@ import com.github.ghactions.model.RepoCoordinates
 import com.github.ghactions.model.RunNode
 import com.github.ghactions.model.WorkflowNode
 import com.github.ghactions.model.WorkflowRun
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -87,7 +89,7 @@ class PollingEngine(
         }
     }
 
-    private fun pollOnce(): Duration? {
+    private suspend fun pollOnce(): Duration? {
         val repo = repoProvider()
         if (repo == null) {
             // IDE 启动初期 GitRepositoryManager 尚未初始化完，repoProvider 会短暂返回 null。
@@ -146,11 +148,21 @@ class PollingEngine(
         // 这里与当前可见 run 的 id 求交，只对仍存在的 run 拉 jobs 并保留缓存。
         val visibleIds = visibleRuns.mapTo(HashSet()) { it.id }
         val expanded = expandedRuns().intersect(visibleIds)
-        for (run in visibleRuns) {
-            if (run.id !in expanded) continue
-            when (val jobsResult = client.listJobs(repo, run.id)) {
+
+        // 并发拉取各个展开 run 的 jobs。单次 API 往返在慢网络下可达数秒，
+        // 串行拉取时「展开 N 个 run」会让一轮耗时线性叠加到几十秒，
+        // 面板长时间停在旧数据上，看起来就像卡死了。
+        val jobsResults = coroutineScope {
+            visibleRuns
+                .filter { it.id in expanded }
+                .map { run -> run.id to async { client.listJobs(repo, run.id) } }
+                .map { (runId, deferred) -> runId to deferred.await() }
+        }
+
+        for ((runId, jobsResult) in jobsResults) {
+            when (jobsResult) {
                 is ApiResult.Data -> {
-                    lastJobs[run.id] = jobsResult.value
+                    lastJobs[runId] = jobsResult.value
                     jobsResult.rateLimitRemaining?.let { remaining = it }
                 }
 

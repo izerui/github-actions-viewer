@@ -34,7 +34,9 @@ class ActionsTreeVisibilityTest {
     private fun treeWithModel(): Pair<JTree, ActionsTreeModel> {
         val model = ActionsTreeModel()
         val tree = JTree(model.swingModel)
-        // 与 ActionsTreePanel 保持一致：根节点不可见，只展示 workflow 及以下
+        // 故意设为不可见：这样 rowCount > 0 才能严格证明「root 被展开了」。
+        // 面板本身现在显示 WORKFLOWS 根节点，但 applyTo 展开 root 的职责与该配置无关，
+        // 用 false 能让断言更严格——root 若未展开，rowCount 会是 0 而非 1。
         tree.isRootVisible = false
         return tree to model
     }
