@@ -16,6 +16,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.PopupHandler
 import com.intellij.ui.TreeSpeedSearch
+import com.intellij.ui.hover.TreeHoverListener
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.treeStructure.Tree
@@ -24,7 +25,10 @@ import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.datatransfer.StringSelection
 import java.awt.event.HierarchyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import javax.swing.JLabel
+import javax.swing.JTree
 import javax.swing.JPanel
 import javax.swing.SwingConstants
 import javax.swing.event.TreeExpansionEvent
@@ -40,6 +44,7 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
     private val service = ActionsPollingService.getInstance(project)
     private val treeModel = ActionsTreeModel()
     private val tree = Tree(treeModel.swingModel)
+    private val rowRenderer = ActionsRowRenderer()
 
     private val cards = CardLayout()
     private val content = JPanel(cards)
@@ -55,7 +60,7 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
         // 显示 WORKFLOWS 分组标题（渲染器会把根节点画成灰色粗体）
         tree.isRootVisible = true
         tree.showsRootHandles = true
-        tree.cellRenderer = ActionsTreeCellRenderer()
+        tree.cellRenderer = rowRenderer
         // 允许在 CellRendererPane 下自我刷新的动画图标（"运行中"转轮）真正转动。
         // AnimatedIcon.getRendererOwner 以此 client property 为闸门，不设则转轮静止。
         tree.putClientProperty(AnimatedIcon.ANIMATION_IN_RENDERER_ALLOWED, true)
@@ -72,6 +77,7 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
         wireVisibilityTracking()
         wireSpeedSearch()
         wirePopupMenu()
+        wireHoverAction()
 
         // 先同步渲染一次当前状态，再订阅后续变化。
         // observe 提交的 EDT 协程要等到调度器空闲才开始 collect，这中间存在一个窗口期；
@@ -125,6 +131,36 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
                 selectedRunUrl()?.let { CopyPasteManager.getInstance().setContents(StringSelection(it)) }
             }
         }
+
+    /**
+     * 悬停时在行右侧浮现「在浏览器中打开」按钮，点它直接跳转。
+     * 忙碌与操作反馈都出现在鼠标所指的那一行，不必先选中再去工具栏找按钮。
+     */
+    private fun wireHoverAction() {
+        object : TreeHoverListener() {
+            override fun onHover(tree: JTree, row: Int) {
+                if (rowRenderer.hoveredRow == row) return
+                rowRenderer.hoveredRow = row
+                tree.repaint()
+            }
+        }.addTo(tree)
+
+        tree.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                val row = tree.getRowForLocation(e.x, e.y).takeIf { it >= 0 } ?: return
+                val bounds = tree.getRowBounds(row) ?: return
+                val actionWidth = rowRenderer.actionWidth()
+                if (actionWidth <= 0) return
+                // 命中判断：按钮贴在该行内容的最右端
+                if (e.x < bounds.x + bounds.width - actionWidth) return
+
+                val node = tree.getPathForRow(row)?.lastPathComponent as? DefaultMutableTreeNode ?: return
+                val url = (node.userObject as? RunItem)?.run?.htmlUrl?.ifEmpty { null } ?: return
+                openInBrowser(url)
+                e.consume()
+            }
+        })
+    }
 
     /** 右键菜单。IDEA 里到处都是这种交互，用户不用学。 */
     private fun wirePopupMenu() {
