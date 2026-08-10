@@ -213,6 +213,47 @@ class ActionsTreeModelTest {
     }
 
     @Test
+    fun `节点换位后视图层兜底恢复展开态`() {
+        // 复现节点换位分支：先构造 A、B 两个 workflow，展开 B，再让 B 换到 index 0。
+        // ActionsTreeModel 换位走 remove+insert，JTree 会丢弃 B 子树的展开态且不派发
+        // treeCollapsed。这里验证 render() 里「apply 前快照、apply 后 expandPath」的兜底能救回。
+        val model = ActionsTreeModel()
+        model.apply(
+            listOf(
+                WorkflowNode("A", listOf(RunNode(run(1, 1, RunStatus.SUCCESS, "A"), listOf(job(10, RunStatus.SUCCESS))))),
+                WorkflowNode("B", listOf(RunNode(run(2, 1, RunStatus.SUCCESS, "B"), listOf(job(20, RunStatus.SUCCESS))))),
+            ),
+        )
+
+        val tree = JTree(model.swingModel)
+        val bNode = child(model.root, 1)
+        val bPath = TreePath(arrayOf<Any>(model.root, bNode))
+        tree.expandPath(bPath)
+        assertTrue(tree.isExpanded(bPath), "前置条件：B 应已展开")
+
+        // 模拟 render()：apply 前快照展开态。
+        val expandedPaths = (0 until tree.rowCount)
+            .mapNotNull { tree.getPathForRow(it) }
+            .filter { tree.isExpanded(it) }
+
+        // 让 B 换到 index 0（A、B 顺序互换），触发 ActionsTreeModel 的换位分支。
+        model.apply(
+            listOf(
+                WorkflowNode("B", listOf(RunNode(run(2, 1, RunStatus.SUCCESS, "B"), listOf(job(20, RunStatus.SUCCESS))))),
+                WorkflowNode("A", listOf(RunNode(run(1, 1, RunStatus.SUCCESS, "A"), listOf(job(10, RunStatus.SUCCESS))))),
+            ),
+        )
+
+        // 节点实例被复用，B 现在位于 index 0。
+        assertSame(bNode, child(model.root, 0))
+
+        // 视图层兜底：apply 后逐一 expandPath。因节点复用，快照的 TreePath 依旧有效。
+        expandedPaths.forEach { tree.expandPath(it) }
+
+        assertTrue(tree.isExpanded(bPath), "换位并兜底后 B 仍应展开")
+    }
+
+    @Test
     fun `enclosingRun 能从各层节点回溯所属 run`() {
         val model = ActionsTreeModel()
         model.apply(

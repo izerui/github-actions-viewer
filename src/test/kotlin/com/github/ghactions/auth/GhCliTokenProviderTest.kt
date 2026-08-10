@@ -32,6 +32,14 @@ class GhCliTokenProviderTest {
     }
 
     @Test
+    fun `合流输出含前导噪声行时取末行 token`() {
+        // stderr 合流到 stdout 后，gh 的升级提示等噪声行出现在 token 之前，退出码仍为 0。
+        val merged = "A new release of gh is available: 2.40.0\ngho_realtoken123\n"
+        val result = provider(CommandOutput(0, merged, "")).token()
+        assertEquals(TokenResult.Success("gho_realtoken123"), result)
+    }
+
+    @Test
     fun `调用的是 gh auth token`() {
         var captured: List<String>? = null
         val runner = CommandRunner { cmd ->

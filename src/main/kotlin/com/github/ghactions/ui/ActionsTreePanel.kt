@@ -137,7 +137,18 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
 
     private fun render(state: ViewState) {
         if (state is ViewState.Loaded && state.workflows.isNotEmpty()) {
+            // 视图层通用兜底：apply 前快照展开态，apply 后逐一恢复。
+            // 正常路径下节点实例复用，展开态本就保持，这里是无害的幂等操作；
+            // 但它同时覆盖了 ActionsTreeModel 里节点换位分支（先 remove 后 insert 会让
+            // JTree 丢弃该子树展开态且不派发 treeCollapsed）以及未来任何类似的结构事件路径。
+            // 因为节点实例被复用，快照下来的 TreePath 在 apply 之后依然有效，expandPath 幂等。
+            val expandedPaths = (0 until tree.rowCount)
+                .mapNotNull { tree.getPathForRow(it) }
+                .filter { tree.isExpanded(it) }
+
             treeModel.apply(state.workflows)
+
+            expandedPaths.forEach { tree.expandPath(it) }
             cards.show(content, CARD_TREE)
             val ago = DateFormatUtil.formatBetweenDates(state.lastUpdated.toEpochMilli(), System.currentTimeMillis())
             statusLabel.text = if (state.degraded) {
