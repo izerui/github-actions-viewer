@@ -6,6 +6,7 @@ import com.github.ghactions.api.JdkHttpTransport
 import com.github.ghactions.auth.GhCliTokenProvider
 import com.github.ghactions.auth.ProcessCommandRunner
 import com.github.ghactions.repo.IdeGitRepoProvider
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
@@ -19,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap
  * 注入的 CoroutineScope 在项目关闭时自动取消。
  */
 @Service(Service.Level.PROJECT)
-class ActionsPollingService(project: Project, scope: CoroutineScope) {
+class ActionsPollingService(project: Project, private val scope: CoroutineScope) {
 
     private val etags = EtagCache()
     private val repoProvider = IdeGitRepoProvider(project)
@@ -47,6 +48,13 @@ class ActionsPollingService(project: Project, scope: CoroutineScope) {
     fun setExpanded(runId: Long, isExpanded: Boolean) {
         val changed = if (isExpanded) expanded.add(runId) else expanded.remove(runId)
         if (changed && isExpanded) engine.onExpansionChanged()
+    }
+
+    /** 在 EDT 上订阅状态变化。协程随 service 的 scope 一同取消。 */
+    fun observe(onState: (ViewState) -> Unit) {
+        scope.launch(Dispatchers.EDT) {
+            engine.state.collect { onState(it) }
+        }
     }
 
     companion object {
