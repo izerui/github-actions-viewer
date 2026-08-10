@@ -265,6 +265,33 @@ class PollingEngineTest {
     }
 
     @Test
+    fun `仓库尚未就绪时以快节奏重试而非空转 60 秒`() = runTest {
+        // IDE 启动初期 GitRepositoryManager 尚未完成初始化，repoProvider 会短暂返回 null。
+        // 这是「还没准备好」而非「确实没有 GitHub remote」，必须尽快自我纠正，
+        // 否则用户会长时间对着一个错误结论。该路径不发任何 HTTP 请求，快节奏重试零成本。
+        var currentRepo: RepoCoordinates? = null
+        val transport = RecordingTransport({ runsJson("completed", "success") })
+        val engine = engineWith(transport, repoProvider = { currentRepo })
+
+        backgroundScope.launch { engine.run() }
+        engine.setVisible(true)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertSame(ViewState.NoGitRemote, engine.state.value)
+        assertEquals(0, transport.runsCalls.get())
+
+        // Git 仓库完成初始化
+        currentRepo = repo
+
+        advanceTimeBy(5.seconds)
+        runCurrent()
+
+        assertInstanceOf(ViewState.Loaded::class.java, engine.state.value)
+        assertEquals(1, transport.runsCalls.get())
+    }
+
+    @Test
     fun `没有 GitHub remote 时报告 NoGitRemote 且不发请求`() = runTest {
         val transport = RecordingTransport({ runsJson("completed", "success") })
         val engine = engineWith(transport, repoProvider = { null })

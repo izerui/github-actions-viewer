@@ -88,7 +88,11 @@ class PollingEngine(
         val repo = repoProvider()
         if (repo == null) {
             _state.value = ViewState.NoGitRemote
-            return PollingSchedule.intervalFor(visible.value, hasRunning = false, rateLimitRemaining = null)
+            // 用快节奏重试，不要用 IDLE 的 60 秒。IDE 启动初期 GitRepositoryManager 尚未完成
+            // 初始化，repoProvider 会短暂返回 null——那是「还没准备好」，不是「确实没有 GitHub
+            // remote」。按空闲节奏重试会让用户长时间对着一个错误结论。
+            // 这条路径不发任何 HTTP 请求，快节奏重试没有配额成本。
+            return PollingSchedule.intervalFor(visible.value, hasRunning = true, rateLimitRemaining = null)
         }
 
         var remaining: Int? = null

@@ -65,6 +65,11 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
         wireDoubleClick()
         wireVisibilityTracking()
 
+        // 先同步渲染一次当前状态，再订阅后续变化。
+        // observe 提交的 EDT 协程要等到调度器空闲才开始 collect，这中间存在一个窗口期；
+        // 若不先渲染，CardLayout 会停在初始的树卡片上，显示 Tree 组件默认的
+        // "Nothing to show"，而不是我们的「正在加载…」。
+        render(service.engine.state.value)
         service.observe(::render)
     }
 
