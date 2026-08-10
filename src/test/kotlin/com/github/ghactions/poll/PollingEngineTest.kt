@@ -116,8 +116,6 @@ class PollingEngineTest {
         assertEquals(1, loaded.workflows.size)
         assertEquals("CI", loaded.workflows[0].name)
         assertEquals(419, loaded.workflows[0].runs[0].run.runNumber)
-        // UI 靠它拼出仓库的 Actions 页地址，作为截断提示行的跳转目标
-        assertEquals(repo, loaded.repo)
     }
 
     @Test

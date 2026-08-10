@@ -256,51 +256,6 @@ class ActionsTreeModelTest {
     }
 
     @Test
-    fun `截断提示挂在 root 末尾，位于所有 workflow 之后`() {
-        val model = ActionsTreeModel()
-        model.apply(
-            listOf(
-                WorkflowNode("CI", listOf(RunNode(run(1, 1, RunStatus.SUCCESS, "CI"), null))),
-                WorkflowNode("CD", listOf(RunNode(run(2, 1, RunStatus.SUCCESS, "CD"), null))),
-            ),
-            TruncationNoticeItem(15, "https://github.com/o/r/actions"),
-        )
-
-        assertEquals(3, model.root.childCount)
-        val notice = child(model.root, 2).userObject
-        assertTrue(notice is TruncationNoticeItem, "提示应是 root 的最后一个子节点，实际是 $notice")
-    }
-
-    @Test
-    fun `不传截断提示时 root 只有 workflow 节点`() {
-        val model = ActionsTreeModel()
-        model.apply(listOf(WorkflowNode("CI", listOf(RunNode(run(1, 1, RunStatus.SUCCESS), null)))))
-
-        assertEquals(1, model.root.childCount)
-    }
-
-    @Test
-    fun `刷新时截断提示节点被复用而非重建`() {
-        val model = ActionsTreeModel()
-        val workflows = listOf(WorkflowNode("CI", listOf(RunNode(run(1, 1, RunStatus.SUCCESS), null))))
-        model.apply(workflows, TruncationNoticeItem(15, "https://github.com/o/r/actions"))
-        val noticeNode = child(model.root, 1)
-
-        model.apply(workflows, TruncationNoticeItem(15, "https://github.com/o/r/actions"))
-
-        // 每轮删了重建会连带影响兄弟节点的结构事件，也让提示行在刷新瞬间闪烁
-        assertSame(noticeNode, child(model.root, 1))
-    }
-
-    @Test
-    fun `截断提示文案随条数上限变化`() {
-        assertTrue(
-            TruncationNoticeItem(30, "https://github.com/o/r/actions").label.contains("30"),
-            "文案里的条数应取自上限而非写死",
-        )
-    }
-
-    @Test
     fun `enclosingRun 能从各层节点回溯所属 run`() {
         val model = ActionsTreeModel()
         model.apply(

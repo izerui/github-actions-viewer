@@ -214,7 +214,6 @@ class PollingEngine(
 
         val quota = remaining
         _state.value = ViewState.Loaded(
-            repo = repo,
             workflows = workflows,
             lastUpdated = now(),
             degraded = quota != null && quota < PollingSchedule.LOW_QUOTA_THRESHOLD,

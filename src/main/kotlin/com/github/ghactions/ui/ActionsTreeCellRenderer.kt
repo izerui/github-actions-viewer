@@ -69,15 +69,6 @@ class ActionsTreeCellRenderer : ColoredTreeCellRenderer() {
             return
         }
 
-        // 截断提示不是一次运行，没有状态可言：整行次要色，不参与下方的按状态着色。
-        if (item is TruncationNoticeItem) {
-            showedBusyIcon = false
-            icon = null
-            append(item.label, SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
-            toolTipText = item.actionsUrl
-            return
-        }
-
         // 正在加载 jobs 的 run 自己转圈——忙碌反馈出现在用户点击的那个对象身上，
         // 而不是另起一行告知。运行中的 run 本就是转圈图标，两者语义一致，不冲突。
         showedBusyIcon = item is RunItem && item.run.id in loadingRuns

@@ -27,14 +27,8 @@ class ActionsTreeModel {
      */
     val swingModel: DefaultTreeModel = DefaultTreeModel(root, true)
 
-    /**
-     * [notice] 是可选的截断提示，追加在所有 workflow 之后作为根的最后一行。
-     */
-    fun apply(workflows: List<WorkflowNode>, notice: TruncationNoticeItem? = null) {
-        val topLevel = workflows.map { WorkflowItem(it.name, it.runs.firstOrNull()?.run?.status) } + listOfNotNull(notice)
-        syncChildren(root, topLevel) { node, index ->
-            // 提示行排在 workflow 之后，它没有下一层，下标也超出 workflows 的范围。
-            if (index >= workflows.size) return@syncChildren
+    fun apply(workflows: List<WorkflowNode>) {
+        syncChildren(root, workflows.map { WorkflowItem(it.name, it.runs.firstOrNull()?.run?.status) }) { node, index ->
             val workflow = workflows[index]
             syncChildren(node, workflow.runs.map { RunItem(it.run) }) { runNode, runIndex ->
                 val jobs = workflow.runs[runIndex].jobs.orEmpty()
@@ -57,8 +51,8 @@ class ActionsTreeModel {
      * （早先 `apply` 末尾的 `nodeStructureChanged(root)` 顺带产生过展开 root 的副作用，
      * 但它同时会清空 JTree 的展开态，已被移除；展开 root 的职责因此需要在这里显式承担。）
      */
-    fun applyTo(tree: JTree, workflows: List<WorkflowNode>, notice: TruncationNoticeItem? = null) {
-        apply(workflows, notice)
+    fun applyTo(tree: JTree, workflows: List<WorkflowNode>) {
+        apply(workflows)
         tree.expandPath(TreePath(root))
     }
 

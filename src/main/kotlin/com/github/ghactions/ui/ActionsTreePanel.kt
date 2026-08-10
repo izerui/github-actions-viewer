@@ -1,6 +1,5 @@
 package com.github.ghactions.ui
 
-import com.github.ghactions.api.GitHubActionsClient
 import com.github.ghactions.poll.ActionsPollingService
 import com.github.ghactions.poll.ViewState
 import com.intellij.icons.AllIcons
@@ -64,9 +63,6 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
 
     /** 上一次真正渲染到树上的数据，用于跳过无谓的重建。 */
     private var lastRenderedWorkflows: List<com.github.ghactions.model.WorkflowNode>? = null
-
-    /** 上一次渲染的截断提示。它随仓库变化，与数据一同参与「是否需要重建」的判断。 */
-    private var lastRenderedNotice: TruncationNoticeItem? = null
 
     init {
         // 显示 WORKFLOWS 分组标题（渲染器会把根节点画成灰色粗体）
@@ -160,23 +156,13 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
         tree.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
                 val row = tree.getRowForLocation(e.x, e.y).takeIf { it >= 0 } ?: return
-                val node = tree.getPathForRow(row)?.lastPathComponent as? DefaultMutableTreeNode ?: return
-
-                // 截断提示整行都是链接：它本身就是一句「去 GitHub 看全部」，
-                // 没有别的可点内容，不必像 run 行那样限定在右端的按钮上。
-                val notice = node.userObject as? TruncationNoticeItem
-                if (notice != null) {
-                    openInBrowser(notice.actionsUrl)
-                    e.consume()
-                    return
-                }
-
                 val bounds = tree.getRowBounds(row) ?: return
                 val actionWidth = rowRenderer.actionWidth()
                 if (actionWidth <= 0) return
                 // 命中判断：按钮贴在该行内容的最右端
                 if (e.x < bounds.x + bounds.width - actionWidth) return
 
+                val node = tree.getPathForRow(row)?.lastPathComponent as? DefaultMutableTreeNode ?: return
                 val url = (node.userObject as? RunItem)?.run?.htmlUrl?.ifEmpty { null } ?: return
                 openInBrowser(url)
                 e.consume()
@@ -258,13 +244,9 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
 
     private fun render(state: ViewState) {
         if (state is ViewState.Loaded && state.workflows.isNotEmpty()) {
-            val notice = TruncationNoticeItem(
-                limit = GitHubActionsClient.DEFAULT_RUN_LIMIT,
-                actionsUrl = "https://github.com/${state.repo.owner}/${state.repo.name}/actions",
-            )
             // 数据没变就别动树。Loaded 每轮都携带新的 lastUpdated，若不加这道判断，
             // 哪怕 ETag 命中 304、内容一模一样，也会把整棵树重建一遍并触发大量重绘。
-            if (state.workflows != lastRenderedWorkflows || notice != lastRenderedNotice) {
+            if (state.workflows != lastRenderedWorkflows) {
                 // 视图层通用兜底：apply 前快照展开态，apply 后逐一恢复。
                 // 正常路径下节点实例复用，展开态本就保持，这里是无害的幂等操作；
                 // 但它同时覆盖了 ActionsTreeModel 里节点换位分支（先 remove 后 insert 会让
@@ -274,11 +256,10 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
                     .mapNotNull { tree.getPathForRow(it) }
                     .filter { tree.isExpanded(it) }
 
-                treeModel.applyTo(tree, state.workflows, notice)
+                treeModel.applyTo(tree, state.workflows)
 
                 expandedPaths.forEach { tree.expandPath(it) }
                 lastRenderedWorkflows = state.workflows
-                lastRenderedNotice = notice
             }
             // jobs 已到达的 run 停止转圈
             val arrived = state.workflows.asSequence()
@@ -296,7 +277,6 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
             }
         } else {
             lastRenderedWorkflows = null
-            lastRenderedNotice = null
             emptyHolder.removeAll()
             emptyHolder.add(EmptyStatePanel.forState(state), BorderLayout.CENTER)
             emptyHolder.revalidate()

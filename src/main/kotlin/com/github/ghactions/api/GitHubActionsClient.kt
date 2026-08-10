@@ -103,8 +103,7 @@ class GitHubActionsClient(
         }
     }
 
-    internal companion object {
-        /** UI 侧的截断提示（[com.github.ghactions.ui.TruncationNoticeItem]）也读它，文案与实际拉取量因此不会脱节。 */
+    private companion object {
         const val DEFAULT_RUN_LIMIT = 15
         const val API_BASE = "https://api.github.com"
         const val HEADER_REMAINING = "X-RateLimit-Remaining"
