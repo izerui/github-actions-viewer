@@ -30,7 +30,7 @@ class ActionsPollingService(project: Project, private val scope: CoroutineScope)
 
     val engine: PollingEngine = PollingEngine(
         client = GitHubActionsClient(
-            transport = JdkHttpTransport(ideProxySelector(), java.net.Authenticator.getDefault()),
+            transport = JdkHttpTransport(ideProxySelector()),
             tokenProvider = GhCliTokenProvider(ProcessCommandRunner()),
             etags = etags,
         ),

@@ -26,7 +26,12 @@ fun interface HttpTransport {
  * @param proxySelector 代理选择器；null 表示直连。
  *   由调用方（IDE 层）根据用户的配置决定——本类刻意不认识 IntelliJ，
  *   否则整个 api 包就无法用纯 JVM 测试覆盖了。
- * @param authenticator 代理认证凭据；null 表示不需要认证。
+ * @param authenticator **仅**用于代理认证，默认 null。
+ *
+ *   切勿为了「顺带支持认证」而随手传入 Authenticator.getDefault()：
+ *   HttpClient 一旦配置了 authenticator 就认为认证由它托管，会干扰我们手动设置的
+ *   Authorization 头。token 失效后 GitHub 对私有仓库返回的是 404 而非 403
+ *   （故意不暴露仓库是否存在），排查时极具误导性。
  */
 class JdkHttpTransport(
     proxySelector: ProxySelector? = null,
