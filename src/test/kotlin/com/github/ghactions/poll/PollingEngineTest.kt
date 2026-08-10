@@ -265,10 +265,10 @@ class PollingEngineTest {
     }
 
     @Test
-    fun `仓库尚未就绪时以快节奏重试而非空转 60 秒`() = runTest {
-        // IDE 启动初期 GitRepositoryManager 尚未完成初始化，repoProvider 会短暂返回 null。
-        // 这是「还没准备好」而非「确实没有 GitHub remote」，必须尽快自我纠正，
-        // 否则用户会长时间对着一个错误结论。该路径不发任何 HTTP 请求，快节奏重试零成本。
+    fun `仓库尚未就绪时保持加载中并快速探测`() = runTest {
+        // IDE 启动初期 GitRepositoryManager 尚未初始化完，repoProvider 会短暂返回 null。
+        // 这是「还没准备好」而非「确实没有 GitHub remote」：宽限期内必须保持 Loading，
+        // 否则用户会对着误导性的「当前项目没有 GitHub remote」以为自己配置错了。
         var currentRepo: RepoCoordinates? = null
         val transport = RecordingTransport({ runsJson("completed", "success") })
         val engine = engineWith(transport, repoProvider = { currentRepo })
@@ -278,13 +278,12 @@ class PollingEngineTest {
         runCurrent()
         advanceUntilIdle()
 
-        assertSame(ViewState.NoGitRemote, engine.state.value)
+        assertSame(ViewState.Loading, engine.state.value)
         assertEquals(0, transport.runsCalls.get())
 
-        // Git 仓库完成初始化
+        // Git 仓库在宽限期内完成初始化
         currentRepo = repo
-
-        advanceTimeBy(5.seconds)
+        advanceTimeBy(PollingSchedule.REPO_PROBE)
         runCurrent()
 
         assertInstanceOf(ViewState.Loaded::class.java, engine.state.value)
@@ -292,7 +291,7 @@ class PollingEngineTest {
     }
 
     @Test
-    fun `没有 GitHub remote 时报告 NoGitRemote 且不发请求`() = runTest {
+    fun `连续多轮拿不到仓库才认定为没有 GitHub remote`() = runTest {
         val transport = RecordingTransport({ runsJson("completed", "success") })
         val engine = engineWith(transport, repoProvider = { null })
 
@@ -300,6 +299,14 @@ class PollingEngineTest {
         engine.setVisible(true)
         runCurrent()
         advanceUntilIdle()
+
+        assertSame(ViewState.Loading, engine.state.value)
+
+        // 熬过宽限期
+        repeat(PollingSchedule.REPO_GRACE_ROUNDS) {
+            advanceTimeBy(PollingSchedule.REPO_PROBE)
+            runCurrent()
+        }
 
         assertSame(ViewState.NoGitRemote, engine.state.value)
         assertEquals(0, transport.runsCalls.get())

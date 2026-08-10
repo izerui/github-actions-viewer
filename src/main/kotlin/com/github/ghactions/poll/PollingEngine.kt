@@ -44,6 +44,9 @@ class PollingEngine(
     @Volatile
     private var branchFilterEnabled = false
 
+    /** 连续拿不到仓库的轮次，用于区分「Git 还没就绪」与「确实没有 GitHub remote」。 */
+    private var repoMissCount = 0
+
     private var lastRuns: List<WorkflowRun> = emptyList()
     private val lastJobs = mutableMapOf<Long, List<Job>>()
 
@@ -87,13 +90,20 @@ class PollingEngine(
     private fun pollOnce(): Duration? {
         val repo = repoProvider()
         if (repo == null) {
-            _state.value = ViewState.NoGitRemote
-            // 用快节奏重试，不要用 IDLE 的 60 秒。IDE 启动初期 GitRepositoryManager 尚未完成
-            // 初始化，repoProvider 会短暂返回 null——那是「还没准备好」，不是「确实没有 GitHub
-            // remote」。按空闲节奏重试会让用户长时间对着一个错误结论。
-            // 这条路径不发任何 HTTP 请求，快节奏重试没有配额成本。
-            return PollingSchedule.intervalFor(visible.value, hasRunning = true, rateLimitRemaining = null)
+            // IDE 启动初期 GitRepositoryManager 尚未初始化完，repoProvider 会短暂返回 null。
+            // 那是「还没准备好」而非「确实没有 GitHub remote」——过早下结论会让用户
+            // 对着「当前项目没有 GitHub remote」这句误导性提示，以为自己配置错了。
+            // 因此设一个宽限期：期间保持加载中，连续多轮都拿不到才认定为真的没有。
+            // 这条路径只查内存中的仓库列表、不发 HTTP，所以探测得很勤也没有成本。
+            repoMissCount++
+            _state.value = if (repoMissCount > PollingSchedule.REPO_GRACE_ROUNDS) {
+                ViewState.NoGitRemote
+            } else {
+                ViewState.Loading
+            }
+            return if (visible.value) PollingSchedule.REPO_PROBE else null
         }
+        repoMissCount = 0
 
         var remaining: Int? = null
 
