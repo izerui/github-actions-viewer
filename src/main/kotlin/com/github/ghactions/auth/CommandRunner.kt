@@ -1,6 +1,7 @@
 package com.github.ghactions.auth
 
 import com.intellij.util.EnvironmentUtil
+import java.io.File
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
@@ -9,6 +10,31 @@ data class CommandOutput(
     val stdout: String,
     val stderr: String,
 )
+
+/**
+ * 在 [path] 中查找 [command] 并返回绝对路径；找不到返回 null。
+ *
+ * 必须自己解析，不能依赖 ProcessBuilder：它查找可执行文件时用的是 **JVM 自身的
+ * PATH**，而不是 `builder.environment()` 里设置的值——后者只影响子进程运行起来
+ * 之后看到的环境。从 Dock 启动的 IDE 其 PATH 通常只有 /usr/bin:/bin，
+ * 于是 gh 这类装在 /opt/homebrew/bin 下的命令一律「找不到」。
+ *
+ * [isExecutable] 作为参数注入，便于测试时不触碰真实文件系统。
+ */
+internal fun resolveExecutable(
+    command: String,
+    path: String?,
+    isExecutable: (File) -> Boolean = { it.canExecute() },
+): String? {
+    if (command.contains('/')) return command.takeIf { isExecutable(File(it)) }
+    if (path.isNullOrEmpty()) return null
+    return path.split(File.pathSeparatorChar)
+        .asSequence()
+        .filter { it.isNotEmpty() }
+        .map { File(it, command) }
+        .firstOrNull { isExecutable(it) }
+        ?.path
+}
 
 /** 进程执行抽象。返回 null 表示进程根本无法启动（可执行文件不存在）。 */
 fun interface CommandRunner {
@@ -30,8 +56,14 @@ class ProcessCommandRunner(
 ) : CommandRunner {
 
     override fun run(command: List<String>): CommandOutput? = try {
-        val builder = ProcessBuilder(command)
-        builder.environment().putAll(EnvironmentUtil.getEnvironmentMap())
+        // 用 IDE 加载的登录 shell 环境解析出绝对路径。EnvironmentUtil 提供的是完整
+        // PATH（IDE 启动时从登录 shell 抓取），但仅靠它设置 environment 不足以让
+        // ProcessBuilder 找到命令，必须由我们解析后传绝对路径。
+        val env = EnvironmentUtil.getEnvironmentMap()
+        val exe = resolveExecutable(command.first(), env["PATH"])
+            ?: return null
+        val builder = ProcessBuilder(listOf(exe) + command.drop(1))
+        builder.environment().putAll(env)
         // 合并 stderr 到 stdout：单流读取消除「stderr 管道被填满而无人读」的经典死锁，
         // 也让后续单次 readText() 不会因为漏读某个流而卡住。
         builder.redirectErrorStream(true)
