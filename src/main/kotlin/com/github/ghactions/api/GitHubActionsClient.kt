@@ -25,7 +25,14 @@ class GitHubActionsClient(
     @Volatile
     private var cachedToken: String? = null
 
-    fun listRuns(repo: RepoCoordinates, limit: Int = 30): ApiResult<List<WorkflowRun>> =
+    /**
+     * 默认只取最近 [DEFAULT_RUN_LIMIT] 条。
+     *
+     * GitHub 的 runs 接口每条 run 约 12KB，其中 repository 与 head_repository
+     * 两个我们完全用不到的字段就占了七成，且 REST 接口无法筛选字段。取 30 条要传
+     * 437KB、在慢网络下要好几秒；而用户真正关心的就是最近几条。
+     */
+    fun listRuns(repo: RepoCoordinates, limit: Int = DEFAULT_RUN_LIMIT): ApiResult<List<WorkflowRun>> =
         fetch(
             cacheKey = "runs:$repo",
             url = "$API_BASE/repos/${repo.owner}/${repo.name}/actions/runs?per_page=$limit",
@@ -97,6 +104,7 @@ class GitHubActionsClient(
     }
 
     private companion object {
+        const val DEFAULT_RUN_LIMIT = 15
         const val API_BASE = "https://api.github.com"
         const val HEADER_REMAINING = "X-RateLimit-Remaining"
         const val HEADER_RESET = "X-RateLimit-Reset"

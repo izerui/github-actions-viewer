@@ -69,6 +69,24 @@ class GitHubActionsClientTest {
     }
 
     @Test
+    fun `默认只取最近 15 条`() {
+        var capturedUrl: String? = null
+        val transport = HttpTransport { url, _ ->
+            capturedUrl = url
+            HttpResponse(200, runsJson, emptyMap())
+        }
+
+        // 每条 run 约 12KB，其中七成是用不到的 repository 字段且无法筛选，
+        // 取 30 条要传 437KB。默认值直接决定首次加载要等多久。
+        client(transport).listRuns(repo)
+
+        assertEquals(
+            "https://api.github.com/repos/octocat/hello-world/actions/runs?per_page=15",
+            capturedUrl,
+        )
+    }
+
+    @Test
     fun `首次请求不带 If-None-Match 后续请求带上缓存的 etag`() {
         val etags = EtagCache()
         val seen = mutableListOf<String?>()
