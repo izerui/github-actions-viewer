@@ -31,7 +31,7 @@ data class WorkflowItem(val name: String, val latestStatus: RunStatus? = null) :
     override val status: RunStatus? get() = latestStatus
 }
 
-data class RunItem(val run: WorkflowRun) : TreeItem {
+data class RunItem(val run: WorkflowRun, val loadingJobs: Boolean = false) : TreeItem {
     override val id: String get() = "r:${run.id}"
     override val label: String get() = "#${run.runNumber}"
     override val status: RunStatus get() = run.status
@@ -50,15 +50,4 @@ data class StepItem(val jobId: Long, val step: Step) : TreeItem {
     override val label: String get() = step.name
     override val status: RunStatus get() = step.status
     override val durationSeconds: Long? get() = step.durationSeconds
-}
-
-/**
- * 「正在加载」占位。run 的 jobs 要展开后才去拉，在拿到之前树上必须有东西，
- * 否则用户分不清是正在加载还是这个 run 根本没有 job。
- */
-data class LoadingItem(val ownerId: Long) : TreeItem {
-    override val isLeaf: Boolean get() = true
-    override val id: String get() = "loading:$ownerId"
-    override val label: String get() = "正在加载…"
-    override val status: RunStatus? get() = null
 }

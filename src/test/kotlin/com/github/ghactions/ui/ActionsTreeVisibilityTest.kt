@@ -72,39 +72,39 @@ class ActionsTreeVisibilityTest {
     }
 
     @Test
-    fun `jobs 未加载时展开应看到加载中占位`() {
+    fun `正在加载 jobs 的 run 自身显示忙碌图标`() {
         val (tree, model) = treeWithModel()
 
-        // jobs = null 表示还没拉过。展开后若什么都不显示，用户分不清
-        // 是正在加载还是这个 run 根本没有 job——必须给出忙碌反馈。
-        model.applyTo(tree, listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), null)))))
+        // loadingJobs = true 表示用户已展开、正在等 jobs 到达。
+        // 忙碌反馈要出现在用户点击的那个 run 上，而不是另起一行占位。
+        model.applyTo(
+            tree,
+            listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), null, loadingJobs = true)))),
+        )
 
         val workflowNode = model.root.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
         val runNode = workflowNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
+        val item = runNode.userObject as RunItem
 
-        assertEquals(1, runNode.childCount, "应有一个加载中占位节点")
-        val placeholder = (runNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode).userObject
-        assertTrue(placeholder is LoadingItem, "占位节点应为 LoadingItem，实际是 $placeholder")
-        assertTrue(
-            model.swingModel.isLeaf(runNode.getChildAt(0)),
-            "加载中占位自身不该再显示展开箭头",
-        )
+        assertTrue(item.loadingJobs, "该 run 应处于加载中状态")
+        assertEquals(0, runNode.childCount, "加载中不应再插入占位子节点")
+        assertTrue(!model.swingModel.isLeaf(runNode), "加载中的 run 仍须保持可展开")
     }
 
     @Test
-    fun `jobs 加载完成后占位被真实内容替换`() {
+    fun `jobs 到达后 run 不再显示忙碌图标`() {
         val (tree, model) = treeWithModel()
         val jobs = listOf(Job(88, "build", RunStatus.SUCCESS, listOf(Step(1, "Checkout", RunStatus.SUCCESS))))
 
-        model.applyTo(tree, listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), null)))))
+        model.applyTo(tree, listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), null, loadingJobs = true)))))
         model.applyTo(tree, listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419), jobs)))))
 
         val workflowNode = model.root.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
         val runNode = workflowNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
 
+        assertTrue(!(runNode.userObject as RunItem).loadingJobs, "拿到 jobs 后应停止忙碌指示")
         assertEquals(1, runNode.childCount)
-        val child = (runNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode).userObject
-        assertTrue(child is JobItem, "占位应被真实 job 替换，实际是 $child")
+        assertTrue((runNode.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode).userObject is JobItem)
     }
 
     @Test

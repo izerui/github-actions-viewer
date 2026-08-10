@@ -132,10 +132,8 @@ class ActionsTreeModelTest {
         val model = ActionsTreeModel()
         model.apply(listOf(WorkflowNode("CI", listOf(RunNode(run(1, 419, RunStatus.IN_PROGRESS), null)))))
         val runNode = child(child(model.root, 0), 0)
-        // jobs 尚未加载时挂的是「正在加载」占位，而不是空——否则用户展开后
-        // 对着一片空白，分不清是在加载还是这个 run 没有 job。
-        assertEquals(1, runNode.childCount)
-        assertTrue(child(runNode, 0).userObject is LoadingItem)
+        // jobs 尚未加载时没有子节点；忙碌反馈由 run 自身的图标承担（见 RunItem.loadingJobs）
+        assertEquals(0, runNode.childCount)
 
         model.apply(
             listOf(

@@ -61,14 +61,13 @@ class ActionsTreeCellRenderer : ColoredTreeCellRenderer() {
             return
         }
 
-        if (item is LoadingItem) {
-            // 转圈 + 灰色斜体：一眼就知道"在忙"，且不会被误认为是真实内容
-            icon = AnimatedIcon.Default.INSTANCE
-            append(item.label, SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES)
-            return
+        // 正在加载 jobs 的 run 自己转圈——忙碌反馈出现在用户点击的那个对象身上，
+        // 而不是另起一行告知。运行中的 run 本就是转圈图标，两者语义一致，不冲突。
+        icon = if (item is RunItem && item.loadingJobs) {
+            AnimatedIcon.Default.INSTANCE
+        } else {
+            iconForStatus(item.status)
         }
-
-        icon = iconForStatus(item.status)
 
         // 失败最需要被一眼看到，用主题的错误色；正在跑的加粗表示"活的"；
         // 取消与跳过退到次要色，不与真正的失败争夺注意力。

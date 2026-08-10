@@ -30,14 +30,10 @@ class ActionsTreeModel {
     fun apply(workflows: List<WorkflowNode>) {
         syncChildren(root, workflows.map { WorkflowItem(it.name, it.runs.firstOrNull()?.run?.status) }) { node, index ->
             val workflow = workflows[index]
-            syncChildren(node, workflow.runs.map { RunItem(it.run) }) { runNode, runIndex ->
-                val runData = workflow.runs[runIndex]
-                val jobs = runData.jobs
-                // jobs 为 null 表示尚未拉取——挂一个「正在加载」占位，
-                // 让用户展开后立刻有反馈，而不是对着一片空白猜。
-                val children = jobs?.map { JobItem(it) } ?: listOf(LoadingItem(runData.run.id))
-                syncChildren(runNode, children) { jobNode, jobIndex ->
-                    val job = jobs?.getOrNull(jobIndex) ?: return@syncChildren
+            syncChildren(node, workflow.runs.map { RunItem(it.run, it.loadingJobs) }) { runNode, runIndex ->
+                val jobs = workflow.runs[runIndex].jobs.orEmpty()
+                syncChildren(runNode, jobs.map { JobItem(it) }) { jobNode, jobIndex ->
+                    val job = jobs[jobIndex]
                     syncChildren(jobNode, job.steps.map { StepItem(job.id, it) }) { _, _ -> }
                 }
             }
