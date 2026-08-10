@@ -10,9 +10,12 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.time.Instant
+import javax.swing.JTree
 import javax.swing.tree.DefaultMutableTreeNode
+import javax.swing.tree.TreePath
 
 class ActionsTreeModelTest {
 
@@ -168,6 +171,45 @@ class ActionsTreeModelTest {
         model.apply(emptyList())
 
         assertEquals(0, model.root.childCount)
+    }
+
+    @Test
+    fun `刷新后真实 JTree 的展开态得以保持`() {
+        val model = ActionsTreeModel()
+        model.apply(
+            listOf(
+                WorkflowNode(
+                    "CI",
+                    listOf(RunNode(run(1, 419, RunStatus.IN_PROGRESS), listOf(job(88, RunStatus.IN_PROGRESS)))),
+                ),
+            ),
+        )
+
+        // 用真实 JTree 承载模型（纯 JVM，headless 下可用），并展开 workflow 与 run。
+        val tree = JTree(model.swingModel)
+        val workflowNode = child(model.root, 0)
+        val runNode = child(workflowNode, 0)
+        val workflowPath = TreePath(arrayOf(model.root, workflowNode))
+        val runPath = TreePath(arrayOf(model.root, workflowNode, runNode))
+        tree.expandPath(workflowPath)
+        tree.expandPath(runPath)
+        assertTrue(tree.isExpanded(workflowPath), "前置条件：workflow 应已展开")
+        assertTrue(tree.isExpanded(runPath), "前置条件：run 应已展开")
+
+        // 模拟一轮 5 秒刷新：状态从 IN_PROGRESS 变为 SUCCESS，节点实例复用。
+        model.apply(
+            listOf(
+                WorkflowNode(
+                    "CI",
+                    listOf(RunNode(run(1, 419, RunStatus.SUCCESS), listOf(job(88, RunStatus.SUCCESS)))),
+                ),
+            ),
+        )
+
+        // 核心断言：JTree 侧的展开态未被静默清空（旧实现的 nodeStructureChanged(root) 会清空）。
+        assertSame(runNode, child(child(model.root, 0), 0))
+        assertTrue(tree.isExpanded(workflowPath), "刷新后 workflow 仍应展开")
+        assertTrue(tree.isExpanded(runPath), "刷新后 run 仍应展开")
     }
 
     @Test

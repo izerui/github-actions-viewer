@@ -11,6 +11,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.ToggleAction
 import com.intellij.openapi.project.Project
+import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.DoubleClickListener
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBScrollPane
@@ -48,6 +49,9 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
         tree.isRootVisible = false
         tree.showsRootHandles = true
         tree.cellRenderer = ActionsTreeCellRenderer()
+        // 允许在 CellRendererPane 下自我刷新的动画图标（"运行中"转轮）真正转动。
+        // AnimatedIcon.getRendererOwner 以此 client property 为闸门，不设则转轮静止。
+        tree.putClientProperty(AnimatedIcon.ANIMATION_IN_RENDERER_ALLOWED, true)
         tree.selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
 
         content.add(JBScrollPane(tree), CARD_TREE)

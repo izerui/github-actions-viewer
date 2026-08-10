@@ -127,7 +127,11 @@ class PollingEngine(
             .filter { !branchFilterEnabled || it.branch == currentBranch }
             .sortedByDescending { it.runNumber }
 
-        val expanded = expandedRuns()
+        // 兜底收敛：JTree 只对可见节点派发 treeCollapsed。run 因分支过滤被移出、
+        // 或因超出最近条数从列表消失时，其 id 不会被自然移除，会永久留在 expanded 集合。
+        // 这里与当前可见 run 的 id 求交，只对仍存在的 run 拉 jobs 并保留缓存。
+        val visibleIds = visibleRuns.mapTo(HashSet()) { it.id }
+        val expanded = expandedRuns().intersect(visibleIds)
         for (run in visibleRuns) {
             if (run.id !in expanded) continue
             when (val jobsResult = client.listJobs(repo, run.id)) {
