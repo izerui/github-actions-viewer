@@ -35,10 +35,20 @@ class ActionsPollingService(project: Project, private val scope: CoroutineScope)
             etags = etags,
         ),
         etags = etags,
-        repoProvider = { repoProvider.currentRepo() },
+        repoProvider = { repoProvider.currentRepo().also { logRepo(it) } },
         branchProvider = { repoProvider.currentBranch() },
         expandedRuns = { expanded.toSet() },
     )
+
+    /** 仓库解析结果只在变化时记录一次，避免每轮刷屏。排查「面板空着」时这是第一手线索。 */
+    private fun logRepo(resolved: com.github.ghactions.model.RepoCoordinates?) {
+        if (resolved != lastLoggedRepo) {
+            lastLoggedRepo = resolved
+            LOG.info("解析到 GitHub 仓库: ${resolved ?: "无（当前项目没有指向 github.com 的 remote，或 Git 尚未初始化完成）"}")
+        }
+    }
+
+    private var lastLoggedRepo: com.github.ghactions.model.RepoCoordinates? = null
 
     init {
         // client 调用是阻塞式的，必须放在 IO 线程上
@@ -53,11 +63,16 @@ class ActionsPollingService(project: Project, private val scope: CoroutineScope)
     /** 在 EDT 上订阅状态变化。协程随 service 的 scope 一同取消。 */
     fun observe(onState: (ViewState) -> Unit) {
         scope.launch(Dispatchers.EDT) {
-            engine.state.collect { onState(it) }
+            engine.state.collect { state ->
+                LOG.info("面板状态 -> ${state.javaClass.simpleName}")
+                onState(state)
+            }
         }
     }
 
     companion object {
+        private val LOG = com.intellij.openapi.diagnostic.Logger.getInstance(ActionsPollingService::class.java)
+
         fun getInstance(project: Project): ActionsPollingService = project.service()
     }
 }

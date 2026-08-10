@@ -1,8 +1,10 @@
 package com.github.ghactions.ui
 
 import com.github.ghactions.model.WorkflowNode
+import javax.swing.JTree
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
+import javax.swing.tree.TreePath
 
 /**
  * 按稳定身份做差异更新的树模型。
@@ -27,6 +29,22 @@ class ActionsTreeModel {
                 }
             }
         }
+    }
+
+    /**
+     * 把数据应用到 [tree] 上。
+     *
+     * 除了 [apply] 的差异更新，还必须确保 root 处于展开状态：树是 `isRootVisible = false`
+     * 的，JTree 只有在 root 展开时才会渲染它的子节点。root 初始是叶子节点，通过
+     * `nodesWereInserted` 插入第一批子节点并不会让 JTree 自动展开它——于是数据在模型里，
+     * 界面上却一行都看不到。
+     *
+     * （早先 `apply` 末尾的 `nodeStructureChanged(root)` 顺带产生过展开 root 的副作用，
+     * 但它同时会清空 JTree 的展开态，已被移除；展开 root 的职责因此需要在这里显式承担。）
+     */
+    fun applyTo(tree: JTree, workflows: List<WorkflowNode>) {
+        apply(workflows)
+        tree.expandPath(TreePath(root))
     }
 
     /**

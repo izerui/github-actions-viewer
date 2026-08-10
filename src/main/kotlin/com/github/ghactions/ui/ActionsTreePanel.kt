@@ -151,7 +151,7 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
                 .mapNotNull { tree.getPathForRow(it) }
                 .filter { tree.isExpanded(it) }
 
-            treeModel.apply(state.workflows)
+            treeModel.applyTo(tree, state.workflows)
 
             expandedPaths.forEach { tree.expandPath(it) }
             cards.show(content, CARD_TREE)
