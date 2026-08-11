@@ -2,10 +2,15 @@
     <id>com.github.ghactions.viewer</id>
     <name>GitHub Actions Viewer</name>
     <vendor>serv</vendor>
-    <description><![CDATA[
-        实时查看当前项目的 GitHub Actions 执行状态。
-        以 Workflow → Run → Job → Step 四层树形结构展示，自动刷新。
-    ]]></description>
+    <description><![CDATA[<p>Watch GitHub Actions workflow runs for the current project without leaving the IDE. The tool window drills down from workflow to run to job to step, and keeps itself up to date while a run is in progress.</p>
+<ul>
+<li>Four-level tree: workflow &rarr; run &rarr; job &rarr; step, with status icons and durations.</li>
+<li>Automatic refresh that backs off when nothing is running or the API quota gets low.</li>
+<li>Filter to the current branch, open any run on GitHub, or copy its link.</li>
+<li>Load more history per workflow, on demand.</li>
+<li>Authentication reuses the GitHub CLI (<code>gh auth login</code>) &mdash; there is no token to configure.</li>
+</ul>
+<p>在 IDE 内实时查看当前项目的 GitHub Actions 执行状态。以 Workflow → Run → Job → Step 四层树形结构展示，运行期间自动刷新；可按当前分支过滤、跳转 GitHub 页面、按 workflow 加载更多历史记录。认证复用 GitHub CLI，无需另行配置 token。</p>]]></description>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.vcs</depends>
