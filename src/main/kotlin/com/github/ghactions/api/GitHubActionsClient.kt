@@ -39,6 +39,25 @@ class GitHubActionsClient(
             parse = ::parseRuns,
         )
 
+    /**
+     * 按 workflow 分页拉取历史运行记录，供「加载更多」使用。[page] 从 1 开始。
+     *
+     * 不参与 ETag 缓存：这是一次性的用户操作，缓存没有收益，而一旦命中 304
+     * 就只能返回 NotModified，用户点了「加载更多」却什么也拿不到。
+     */
+    fun listWorkflowRuns(
+        repo: RepoCoordinates,
+        workflowId: Long,
+        page: Int,
+        perPage: Int = LOAD_MORE_PAGE_SIZE,
+    ): ApiResult<List<WorkflowRun>> =
+        fetch(
+            cacheKey = null,
+            url = "$API_BASE/repos/${repo.owner}/${repo.name}/actions/workflows/$workflowId/runs" +
+                "?per_page=$perPage&page=$page",
+            parse = ::parseRuns,
+        )
+
     fun listJobs(repo: RepoCoordinates, runId: Long): ApiResult<List<Job>> =
         fetch(
             cacheKey = "jobs:$repo:$runId",
@@ -46,7 +65,8 @@ class GitHubActionsClient(
             parse = ::parseJobs,
         )
 
-    private fun <T> fetch(cacheKey: String, url: String, parse: (String) -> T): ApiResult<T> {
+    /** [cacheKey] 为 null 时完全不参与 ETag：既不发条件请求头，也不写回缓存。 */
+    private fun <T> fetch(cacheKey: String?, url: String, parse: (String) -> T): ApiResult<T> {
         // 缓存命中则复用；否则取一次 token 并缓存，避免每次请求都 fork gh 子进程。
         val token = cachedToken ?: when (val result = tokenProvider.token()) {
             is TokenResult.Success -> result.token.also { cachedToken = it }
@@ -58,7 +78,7 @@ class GitHubActionsClient(
             put("Authorization", "Bearer $token")
             put("Accept", "application/vnd.github+json")
             put("X-GitHub-Api-Version", "2022-11-28")
-            etags.get(cacheKey)?.let { put("If-None-Match", it) }
+            cacheKey?.let { key -> etags.get(key)?.let { put("If-None-Match", it) } }
         }
 
         val response = try {
@@ -72,7 +92,7 @@ class GitHubActionsClient(
 
         return when {
             response.statusCode == 200 -> {
-                etags.put(cacheKey, response.header("ETag"))
+                cacheKey?.let { etags.put(it, response.header("ETag")) }
                 try {
                     ApiResult.Data(parse(response.body), remaining)
                 } catch (e: Exception) {
@@ -103,8 +123,12 @@ class GitHubActionsClient(
         }
     }
 
-    private companion object {
+    internal companion object {
         const val DEFAULT_RUN_LIMIT = 15
+
+        /** 「加载更多」每次追加的条数。与首屏一致，用户对「一页」的预期不会跳。 */
+        const val LOAD_MORE_PAGE_SIZE = 15
+
         const val API_BASE = "https://api.github.com"
         const val HEADER_REMAINING = "X-RateLimit-Remaining"
         const val HEADER_RESET = "X-RateLimit-Reset"

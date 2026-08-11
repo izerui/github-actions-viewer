@@ -40,6 +40,20 @@ class DtoTest {
     }
 
     @Test
+    fun `解析 workflow_id，缺失时为 0`() {
+        val withId = parseRuns(
+            """{"workflow_runs":[{"id":1,"workflow_id":98765,"name":"CI","status":"completed","conclusion":"success"}]}""",
+        )
+        // 「加载更多」要靠它打到 /actions/workflows/{id}/runs
+        assertEquals(98765L, withId[0].workflowId)
+
+        val without = parseRuns(
+            """{"workflow_runs":[{"id":1,"name":"CI","status":"completed","conclusion":"success"}]}""",
+        )
+        assertEquals(0L, without[0].workflowId, "缺失时归零，由上层据此判定不可加载更多")
+    }
+
+    @Test
     fun `缺少 id 的条目被丢弃`() {
         val json = """
         {"workflow_runs":[{"run_number":1,"name":"x","status":"completed","conclusion":"success"}]}

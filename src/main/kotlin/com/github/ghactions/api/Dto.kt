@@ -24,6 +24,7 @@ internal class RunDto {
     @SerializedName("id") var id: Long? = null
     @SerializedName("run_number") var runNumber: Int? = null
     @SerializedName("name") var name: String? = null
+    @SerializedName("workflow_id") var workflowId: Long? = null
     @SerializedName("head_branch") var headBranch: String? = null
     @SerializedName("status") var status: String? = null
     @SerializedName("conclusion") var conclusion: String? = null
@@ -78,6 +79,7 @@ private fun RunDto.toModel(): WorkflowRun? {
         id = runId,
         runNumber = runNumber ?: 0,
         workflowName = name?.takeIf { it.isNotBlank() } ?: UNNAMED_WORKFLOW,
+        workflowId = workflowId ?: 0,
         branch = headBranch.orEmpty(),
         status = RunStatus.from(status, conclusion),
         htmlUrl = htmlUrl.orEmpty(),

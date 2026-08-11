@@ -44,6 +44,19 @@ data class JobItem(val job: Job) : TreeItem {
     override val durationSeconds: Long? get() = job.durationSeconds
 }
 
+/**
+ * 挂在每个 workflow 的 run 之后的「加载更多」。
+ *
+ * [id] 只由 [workflowName] 决定，[loading] 变化因此走的是节点数据更新而非重建，
+ * 这一行不会在点击瞬间闪烁。
+ */
+data class LoadMoreItem(val workflowName: String, val loading: Boolean) : TreeItem {
+    override val isLeaf: Boolean get() = true
+    override val id: String get() = "more:$workflowName"
+    override val label: String get() = if (loading) "加载中…" else "加载更多"
+    override val status: RunStatus? get() = null
+}
+
 data class StepItem(val jobId: Long, val step: Step) : TreeItem {
     override val isLeaf: Boolean get() = true
     override val id: String get() = "s:$jobId:${step.number}"

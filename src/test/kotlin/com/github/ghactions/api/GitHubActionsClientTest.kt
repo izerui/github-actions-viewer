@@ -47,6 +47,40 @@ class GitHubActionsClientTest {
     }
 
     @Test
+    fun `按 workflow 分页拉取历史运行记录`() {
+        var capturedUrl: String? = null
+        var capturedHeaders: Map<String, String>? = null
+        val transport = HttpTransport { url, headers ->
+            capturedUrl = url
+            capturedHeaders = headers
+            HttpResponse(200, runsJson, mapOf("ETag" to "\"v1\"", "X-RateLimit-Remaining" to "4999"))
+        }
+        val etags = EtagCache().apply { put("runs:$repo", "\"stale\"") }
+
+        val result = client(transport, etags).listWorkflowRuns(repo, workflowId = 98765, page = 2)
+
+        assertEquals(
+            "https://api.github.com/repos/octocat/hello-world/actions/workflows/98765/runs?per_page=15&page=2",
+            capturedUrl,
+        )
+        // 一次性的用户操作，缓存没有收益；更要紧的是别让 304 把「加载更多」变成空手而归
+        assertNull(capturedHeaders!!["If-None-Match"], "分页请求不该带条件请求头")
+        assertInstanceOf(ApiResult.Data::class.java, result)
+    }
+
+    @Test
+    fun `分页请求不污染轮询的 ETag 缓存`() {
+        val transport = HttpTransport { _, _ ->
+            HttpResponse(200, runsJson, mapOf("ETag" to "\"page2\"", "X-RateLimit-Remaining" to "4999"))
+        }
+        val etags = EtagCache().apply { put("runs:$repo", "\"v1\"") }
+
+        client(transport, etags).listWorkflowRuns(repo, workflowId = 98765, page = 2)
+
+        assertEquals("\"v1\"", etags.get("runs:$repo"), "轮询那条缓存不该被分页请求改写")
+    }
+
+    @Test
     fun `请求带上必需的 GitHub 头与认证`() {
         var capturedUrl: String? = null
         var capturedHeaders: Map<String, String>? = null

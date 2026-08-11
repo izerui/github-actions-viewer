@@ -64,6 +64,14 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
     /** 上一次真正渲染到树上的数据，用于跳过无谓的重建。 */
     private var lastRenderedWorkflows: List<com.github.ghactions.model.WorkflowNode>? = null
 
+    /**
+     * 正在加载更多的 workflow。
+     *
+     * 与 [pendingRuns] 同理：网络往返要好几秒，反馈必须在点击的那一刻就出现在
+     * 那一行上，而不是等数据回来再说。
+     */
+    private val loadingWorkflows = mutableSetOf<String>()
+
     init {
         // 显示 WORKFLOWS 分组标题（渲染器会把根节点画成灰色粗体）
         tree.isRootVisible = true
@@ -156,13 +164,23 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
         tree.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
                 val row = tree.getRowForLocation(e.x, e.y).takeIf { it >= 0 } ?: return
+                val node = tree.getPathForRow(row)?.lastPathComponent as? DefaultMutableTreeNode ?: return
+
+                // 「加载更多」整行都是按钮：这一行没有别的可点内容，
+                // 不必像 run 行那样把命中区限定在右端的图标上。
+                val more = node.userObject as? LoadMoreItem
+                if (more != null) {
+                    if (!more.loading) requestLoadMore(more.workflowName)
+                    e.consume()
+                    return
+                }
+
                 val bounds = tree.getRowBounds(row) ?: return
                 val actionWidth = rowRenderer.actionWidth()
                 if (actionWidth <= 0) return
                 // 命中判断：按钮贴在该行内容的最右端
                 if (e.x < bounds.x + bounds.width - actionWidth) return
 
-                val node = tree.getPathForRow(row)?.lastPathComponent as? DefaultMutableTreeNode ?: return
                 val url = (node.userObject as? RunItem)?.run?.htmlUrl?.ifEmpty { null } ?: return
                 openInBrowser(url)
                 e.consume()
@@ -237,6 +255,25 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
         return enclosingRun(node)?.run?.htmlUrl?.ifEmpty { null }
     }
 
+    /**
+     * 发起一次加载更多。重复点击被忽略——一次请求还没回来，再点也只是白发请求。
+     * 无论成败都要摘掉转圈标记：失败时引擎不发布新状态，否则那一行会一直转下去。
+     */
+    private fun requestLoadMore(workflowName: String) {
+        if (!loadingWorkflows.add(workflowName)) return
+        refreshLoadMoreRows()
+        service.loadMore(workflowName) {
+            loadingWorkflows.remove(workflowName)
+            refreshLoadMoreRows()
+        }
+    }
+
+    /** 只重画「加载更多」那几行的状态。节点实例复用，展开态不受影响。 */
+    private fun refreshLoadMoreRows() {
+        val workflows = lastRenderedWorkflows ?: return
+        treeModel.applyTo(tree, workflows, loadingWorkflows.toSet())
+    }
+
     private fun applyLoadingIndicator() {
         rowRenderer.loadingRuns = pendingRuns.toSet()
         tree.repaint()
@@ -256,7 +293,7 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
                     .mapNotNull { tree.getPathForRow(it) }
                     .filter { tree.isExpanded(it) }
 
-                treeModel.applyTo(tree, state.workflows)
+                treeModel.applyTo(tree, state.workflows, loadingWorkflows.toSet())
 
                 expandedPaths.forEach { tree.expandPath(it) }
                 lastRenderedWorkflows = state.workflows

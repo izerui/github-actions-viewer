@@ -256,6 +256,83 @@ class ActionsTreeModelTest {
     }
 
     @Test
+    fun `可加载更多的 workflow 在 run 之后多出一行`() {
+        val model = ActionsTreeModel()
+        model.apply(
+            listOf(
+                WorkflowNode(
+                    "CI",
+                    listOf(RunNode(run(1, 419, RunStatus.SUCCESS), null)),
+                    workflowId = 98765,
+                    canLoadMore = true,
+                ),
+            ),
+        )
+
+        val workflow = child(model.root, 0)
+        assertEquals(2, workflow.childCount)
+        assertTrue(child(workflow, 0).userObject is RunItem, "run 排在前")
+        val more = child(workflow, 1).userObject
+        assertTrue(more is LoadMoreItem, "「加载更多」应排在所有 run 之后，实际是 $more")
+        assertEquals("CI", (more as LoadMoreItem).workflowName)
+    }
+
+    @Test
+    fun `已到底的 workflow 不再显示加载更多`() {
+        val model = ActionsTreeModel()
+        model.apply(
+            listOf(
+                WorkflowNode(
+                    "CI",
+                    listOf(RunNode(run(1, 419, RunStatus.SUCCESS), null)),
+                    workflowId = 98765,
+                    canLoadMore = false,
+                ),
+            ),
+        )
+
+        assertEquals(1, child(model.root, 0).childCount)
+    }
+
+    @Test
+    fun `加载更多的节点在刷新时被复用`() {
+        val model = ActionsTreeModel()
+        val workflows = listOf(
+            WorkflowNode(
+                "CI",
+                listOf(RunNode(run(1, 419, RunStatus.IN_PROGRESS), null)),
+                workflowId = 98765,
+                canLoadMore = true,
+            ),
+        )
+        model.apply(workflows)
+        val moreNode = child(child(model.root, 0), 1)
+
+        model.apply(workflows)
+
+        // 每轮删了重建会让这一行在刷新瞬间闪烁
+        assertSame(moreNode, child(child(model.root, 0), 1))
+    }
+
+    @Test
+    fun `加载中的标记只更新节点数据，不更换节点实例`() {
+        val model = ActionsTreeModel()
+        val workflow = WorkflowNode(
+            "CI",
+            listOf(RunNode(run(1, 419, RunStatus.SUCCESS), null)),
+            workflowId = 98765,
+            canLoadMore = true,
+        )
+        model.apply(listOf(workflow))
+        val moreNode = child(child(model.root, 0), 1)
+
+        model.apply(listOf(workflow), loadingWorkflows = setOf("CI"))
+
+        assertSame(moreNode, child(child(model.root, 0), 1))
+        assertTrue((moreNode.userObject as LoadMoreItem).loading, "该行应进入加载中")
+    }
+
+    @Test
     fun `enclosingRun 能从各层节点回溯所属 run`() {
         val model = ActionsTreeModel()
         model.apply(

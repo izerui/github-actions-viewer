@@ -12,6 +12,8 @@ data class WorkflowRun(
     val id: Long,
     val runNumber: Int,
     val workflowName: String,
+    /** 所属 workflow 的身份，「加载更多」据此分页。响应里缺失时为 0。 */
+    val workflowId: Long = 0,
     val branch: String,
     val status: RunStatus,
     val htmlUrl: String,
@@ -41,8 +43,15 @@ data class RunNode(
     val jobs: List<Job>?,
 )
 
-/** 树上的一个 workflow 分组。 */
+/**
+ * 树上的一个 workflow 分组。
+ *
+ * [canLoadMore] 为真时树上会多出一行「加载更多」。workflow 身份缺失（[workflowId] 为 0）
+ * 或已翻到底时为假。
+ */
 data class WorkflowNode(
     val name: String,
     val runs: List<RunNode>,
+    val workflowId: Long = 0,
+    val canLoadMore: Boolean = false,
 )

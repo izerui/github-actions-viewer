@@ -55,6 +55,26 @@ class PollingEngine(
     /** 缓存 jobs 时该 run 所处的状态，用于识别「刚跑完」这一刻并重取终态。 */
     private val lastJobsRunStatus = mutableMapOf<Long, com.github.ghactions.model.RunStatus>()
 
+    /**
+     * 「加载更多」拿到的历史运行记录，按 workflow 名分组。
+     *
+     * 它不参与轮询刷新：历史 run 几乎都是已完成的终态，而每个加载过更多的 workflow
+     * 若都跟着 5 秒一轮刷新，每小时要多出几百次请求，很快就会顶到配额上限。
+     */
+    private val extraRuns = mutableMapOf<String, List<WorkflowRun>>()
+
+    /** 每个 workflow 已加载到第几页。首屏算第 1 页，「加载更多」从第 2 页开始。 */
+    private val loadedPages = mutableMapOf<String, Int>()
+
+    /** 已翻到底的 workflow，不再显示「加载更多」。 */
+    private val exhaustedWorkflows = mutableSetOf<String>()
+
+    /** 上一轮的仓库坐标，用于识别仓库切换并丢弃属于旧仓库的历史记录。 */
+    private var lastRepo: RepoCoordinates? = null
+
+    /** 上一轮算出的降频标记，供 [loadMore] 单独发布状态时复用。 */
+    private var lastDegraded = false
+
     fun setVisible(value: Boolean) {
         val previous = visible.value
         visible.value = value
@@ -110,6 +130,14 @@ class PollingEngine(
         }
         repoMissCount = 0
 
+        // 换了仓库：上一个仓库的历史记录必须丢掉，否则会混进新仓库的树里。
+        if (lastRepo != null && lastRepo != repo) {
+            extraRuns.clear()
+            loadedPages.clear()
+            exhaustedWorkflows.clear()
+        }
+        lastRepo = repo
+
         var remaining: Int? = null
 
         when (val result = client.listRuns(repo)) {
@@ -141,10 +169,7 @@ class PollingEngine(
             }
         }
 
-        val currentBranch = branchProvider()
-        val visibleRuns = lastRuns
-            .filter { !branchFilterEnabled || it.branch == currentBranch }
-            .sortedByDescending { it.runNumber }
+        val visibleRuns = visibleRuns()
 
         // 兜底收敛：JTree 只对可见节点派发 treeCollapsed。run 因分支过滤被移出、
         // 或因超出最近条数从列表消失时，其 id 不会被自然移除，会永久留在 expanded 集合。
@@ -207,23 +232,86 @@ class PollingEngine(
         lastJobs.keys.retainAll(visibleIds)
         lastJobsRunStatus.keys.retainAll(visibleIds)
 
-        val workflows = visibleRuns
-            .groupBy { it.workflowName }
-            .map { (name, runs) -> WorkflowNode(name, runs.map { RunNode(it, lastJobs[it.id]) }) }
-            .sortedBy { it.name }
-
         val quota = remaining
-        _state.value = ViewState.Loaded(
-            workflows = workflows,
-            lastUpdated = now(),
-            degraded = quota != null && quota < PollingSchedule.LOW_QUOTA_THRESHOLD,
-        )
+        lastDegraded = quota != null && quota < PollingSchedule.LOW_QUOTA_THRESHOLD
+        publish(visibleRuns)
 
         return PollingSchedule.intervalFor(
             visible = visible.value,
             hasRunning = visibleRuns.any { it.status.isRunning },
             rateLimitRemaining = quota,
         )
+    }
+
+    /**
+     * 当前应当展示的 run：轮询拿到的最近若干条，加上「加载更多」累积的历史记录。
+     *
+     * 两边按 id 去重时**轮询侧优先**——同一个 run 在轮询侧的状态更新。
+     * 历史记录同样要过分支过滤，否则它会绕过过滤器留在树上。
+     */
+    private fun visibleRuns(): List<WorkflowRun> {
+        val currentBranch = branchProvider()
+        val recentIds = lastRuns.mapTo(HashSet()) { it.id }
+        val history = extraRuns.values.flatten().filter { it.id !in recentIds }
+        return (lastRuns + history)
+            .filter { !branchFilterEnabled || it.branch == currentBranch }
+            .sortedByDescending { it.runNumber }
+    }
+
+    private fun publish(visibleRuns: List<WorkflowRun>) {
+        val workflows = visibleRuns
+            .groupBy { it.workflowName }
+            .map { (name, runs) ->
+                val workflowId = runs.firstOrNull { it.workflowId != 0L }?.workflowId ?: 0L
+                WorkflowNode(
+                    name = name,
+                    runs = runs.map { RunNode(it, lastJobs[it.id]) },
+                    workflowId = workflowId,
+                    // 没有 workflow 身份就无从分页；翻到底之后也不必再问一次。
+                    canLoadMore = workflowId != 0L && name !in exhaustedWorkflows,
+                )
+            }
+            .sortedBy { it.name }
+
+        _state.value = ViewState.Loaded(
+            workflows = workflows,
+            lastUpdated = now(),
+            degraded = lastDegraded,
+        )
+    }
+
+    /**
+     * 为 [workflowName] 再加载一页历史运行记录。
+     *
+     * 结果存入 [extraRuns] 后就静止，不参与后续轮询。失败时不改动任何状态——
+     * 既不推进页码也不标记到底，用户可以直接再点一次重试。
+     *
+     * client 调用是阻塞的，调用方须在 IO 线程上执行。
+     */
+    suspend fun loadMore(workflowName: String) {
+        if (workflowName in exhaustedWorkflows) return
+        val repo = repoProvider() ?: return
+        val workflowId = (lastRuns + extraRuns.values.flatten())
+            .firstOrNull { it.workflowName == workflowName && it.workflowId != 0L }
+            ?.workflowId
+            ?: return
+
+        val page = (loadedPages[workflowName] ?: 1) + 1
+        val result = client.listWorkflowRuns(repo, workflowId, page)
+        if (result !is ApiResult.Data) return
+
+        val already = extraRuns[workflowName].orEmpty()
+        val seen = (lastRuns.asSequence().map { it.id } + already.asSequence().map { it.id }).toHashSet()
+        extraRuns[workflowName] = already + result.value.filter { it.id !in seen }
+        loadedPages[workflowName] = page
+
+        // 不足一页说明后面没有了。用返回条数判断，比再发一次请求确认要省一趟往返。
+        if (result.value.size < GitHubActionsClient.LOAD_MORE_PAGE_SIZE) {
+            exhaustedWorkflows += workflowName
+        }
+
+        // 立即发布，不等下一轮轮询——用户点了按钮就该马上看到结果。
+        publish(visibleRuns())
     }
 
     private companion object {

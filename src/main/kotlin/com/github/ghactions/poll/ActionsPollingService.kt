@@ -13,6 +13,7 @@ import com.intellij.openapi.project.Project
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -71,6 +72,22 @@ class ActionsPollingService(project: Project, private val scope: CoroutineScope)
     init {
         // client 调用是阻塞式的，必须放在 IO 线程上
         scope.launch(Dispatchers.IO) { engine.run() }
+    }
+
+    /**
+     * 为某个 workflow 再加载一页历史记录。client 调用阻塞，同样丢到 IO 线程。
+     *
+     * [onDone] 在 EDT 上回调，且**无论成败都会执行**——失败时引擎不会发布新状态，
+     * 若只在成功时回调，那一行会永远转圈。
+     */
+    fun loadMore(workflowName: String, onDone: () -> Unit) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                engine.loadMore(workflowName)
+            } finally {
+                withContext(Dispatchers.EDT) { onDone() }
+            }
+        }
     }
 
     fun setExpanded(runId: Long, isExpanded: Boolean) {

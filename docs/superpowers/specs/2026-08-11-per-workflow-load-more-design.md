@@ -64,7 +64,9 @@ fun listWorkflowRuns(
 
 ### 合并规则
 
-构造 `WorkflowNode` 时，该组的 runs = 轮询侧的最近 15 条 + `extraRuns[name]`，按 run id 去重（**轮询侧优先**，它的状态更新），再按 `updatedAt` 降序。
+构造 `WorkflowNode` 时，该组的 runs = 轮询侧的最近 15 条 + `extraRuns[name]`，按 run id 去重（**轮询侧优先**，它的状态更新），再按 `runNumber` 降序（沿用现有排序）。
+
+合并结果同时供 jobs 的按需拉取使用：历史 run 展开后同样要能看到 jobs，若只把轮询侧的 run 纳入可见集合，展开历史 run 会永远转圈。jobs 本就是按需拉取且拉过即缓存，不会增加轮询开销。
 
 分支过滤开启时，`extraRuns` 与轮询数据用同一套过滤，避免历史记录绕过过滤器。
 

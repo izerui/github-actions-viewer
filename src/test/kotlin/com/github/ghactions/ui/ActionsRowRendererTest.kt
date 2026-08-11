@@ -85,6 +85,32 @@ class ActionsRowRendererTest {
     }
 
     @Test
+    fun `加载中的加载更多行显示忙碌图标`() {
+        val cellRenderer = ActionsTreeCellRenderer()
+
+        cellRenderer.getTreeCellRendererComponent(
+            tree, DefaultMutableTreeNode(LoadMoreItem("CI", loading = false)), false, false, true, 0, false,
+        )
+        assertEquals(null, cellRenderer.icon, "空闲时不占图标位")
+
+        cellRenderer.getTreeCellRendererComponent(
+            tree, DefaultMutableTreeNode(LoadMoreItem("CI", loading = true)), false, false, true, 0, false,
+        )
+        // 点击到数据回来要好几秒，反馈必须出现在用户点的那一行
+        assertTrue(cellRenderer.icon != null, "加载中应有忙碌图标")
+    }
+
+    @Test
+    fun `加载更多行不占用按钮宽度`() {
+        val node = DefaultMutableTreeNode(LoadMoreItem("CI", loading = false))
+
+        renderer.hoveredRow = 0
+        render(node, 0)
+
+        assertEquals(0, renderer.actionWidth(), "整行可点，不需要右侧按钮")
+    }
+
+    @Test
     fun `非 run 行不占用按钮宽度`() {
         val node = DefaultMutableTreeNode(WorkflowItem("CI", RunStatus.SUCCESS))
 

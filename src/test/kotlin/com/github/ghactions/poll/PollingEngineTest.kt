@@ -40,10 +40,23 @@ class PollingEngineTest {
     private fun runsJson(status: String, conclusion: String?, branch: String = "main"): String {
         val conclusionJson = conclusion?.let { "\"$it\"" } ?: "null"
         return """
-            {"workflow_runs":[{"id":1,"run_number":419,"name":"CI","head_branch":"$branch",
+            {"workflow_runs":[{"id":1,"run_number":419,"name":"CI","workflow_id":$CI_WORKFLOW_ID,
+            "head_branch":"$branch",
             "status":"$status","conclusion":$conclusionJson,
             "html_url":"https://example.test/1","updated_at":"2026-08-10T07:30:00Z"}]}
         """.trimIndent()
+    }
+
+    /** 一页历史运行记录。[ids] 同时用作 run_number，越小越旧。 */
+    private fun historyJson(vararg ids: Int, name: String = "CI", branch: String = "main"): String {
+        val items = ids.joinToString(",") { id ->
+            """
+            {"id":$id,"run_number":$id,"name":"$name","workflow_id":$CI_WORKFLOW_ID,
+            "head_branch":"$branch","status":"completed","conclusion":"success",
+            "html_url":"https://example.test/$id","updated_at":"2026-08-01T07:30:00Z"}
+            """.trimIndent()
+        }
+        return """{"workflow_runs":[$items]}"""
     }
 
     private val jobsJson = """
@@ -60,9 +73,17 @@ class PollingEngineTest {
         val runsCalls = AtomicInteger()
         val jobsCalls = AtomicInteger()
 
+        /** 「加载更多」打到的 per-workflow 端点，与轮询的 runs 端点分开计数。 */
+        val workflowRunsCalls = AtomicInteger()
+
         override fun get(url: String, headers: Map<String, String>): HttpResponse {
             val isJobs = url.endsWith("/jobs?per_page=100")
-            if (isJobs) jobsCalls.incrementAndGet() else runsCalls.incrementAndGet()
+            val isWorkflowRuns = url.contains("/actions/workflows/")
+            when {
+                isJobs -> jobsCalls.incrementAndGet()
+                isWorkflowRuns -> workflowRunsCalls.incrementAndGet()
+                else -> runsCalls.incrementAndGet()
+            }
             responder?.invoke(url)?.let { return it }
             return if (isJobs) {
                 HttpResponse(200, jobsBody(), emptyMap())
@@ -534,5 +555,174 @@ class PollingEngineTest {
         assertEquals(2, transport.calls.get())
         val loaded = assertInstanceOf(ViewState.Loaded::class.java, engine.state.value)
         assertEquals(419, loaded.workflows[0].runs[0].run.runNumber)
+    }
+
+    // ---- 加载更多 ----
+
+    /** 起一轮轮询并等它稳定，返回 transport 供后续断言。 */
+    private suspend fun kotlinx.coroutines.test.TestScope.settled(engine: PollingEngine) {
+        backgroundScope.launch { engine.run() }
+        engine.setVisible(true)
+        runCurrent()
+        advanceUntilIdle()
+    }
+
+    private fun loaded(engine: PollingEngine) =
+        assertInstanceOf(ViewState.Loaded::class.java, engine.state.value)
+
+    @Test
+    fun `加载更多把历史记录追加到该 workflow 末尾`() = runTest {
+        val transport = RecordingTransport(
+            { runsJson("completed", "success") },
+            responder = { url -> if ("/actions/workflows/" in url) HttpResponse(200, historyJson(300, 299), emptyMap()) else null },
+        )
+        val engine = engineWith(transport)
+        settled(engine)
+        assertEquals(1, loaded(engine).workflows[0].runs.size)
+
+        engine.loadMore("CI")
+        advanceUntilIdle()
+
+        val runs = loaded(engine).workflows[0].runs
+        assertEquals(listOf(419, 300, 299), runs.map { it.run.runNumber }, "历史记录排在最近的记录之后")
+    }
+
+    @Test
+    fun `历史记录不参与后续轮询，也不增加轮询请求数`() = runTest {
+        val transport = RecordingTransport(
+            { runsJson("in_progress", null) },
+            responder = { url -> if ("/actions/workflows/" in url) HttpResponse(200, historyJson(300), emptyMap()) else null },
+        )
+        val engine = engineWith(transport)
+        settled(engine)
+
+        engine.loadMore("CI")
+        advanceUntilIdle()
+        val runsCallsAfterLoad = transport.runsCalls.get()
+
+        advanceTimeBy(30.seconds)
+        runCurrent()
+
+        // 历史记录仍在（没被最近 15 条冲掉）
+        assertTrue(
+            loaded(engine).workflows[0].runs.any { it.run.runNumber == 300 },
+            "轮询不该把已加载的历史记录冲掉",
+        )
+        // 且轮询期间一次都没再打过 per-workflow 端点
+        assertEquals(1, transport.workflowRunsCalls.get(), "历史记录不该跟着轮询刷新")
+        assertTrue(transport.runsCalls.get() > runsCallsAfterLoad, "前置条件：轮询确实还在跑")
+    }
+
+    @Test
+    fun `返回不足一页说明已到底，不再允许加载更多`() = runTest {
+        val transport = RecordingTransport(
+            { runsJson("completed", "success") },
+            responder = { url -> if ("/actions/workflows/" in url) HttpResponse(200, historyJson(300), emptyMap()) else null },
+        )
+        val engine = engineWith(transport)
+        settled(engine)
+        assertTrue(loaded(engine).workflows[0].canLoadMore, "前置条件：初始应可加载更多")
+
+        engine.loadMore("CI")
+        advanceUntilIdle()
+
+        assertTrue(!loaded(engine).workflows[0].canLoadMore, "只回来 1 条，不足一页，说明没有更多了")
+    }
+
+    @Test
+    fun `与轮询数据重叠的记录以轮询侧为准`() = runTest {
+        // 历史页里也包含 id=1，但状态是过时的 success；轮询侧此刻是 in_progress
+        val transport = RecordingTransport(
+            { runsJson("in_progress", null) },
+            responder = { url -> if ("/actions/workflows/" in url) HttpResponse(200, historyJson(1, 300), emptyMap()) else null },
+        )
+        val engine = engineWith(transport)
+        settled(engine)
+
+        engine.loadMore("CI")
+        advanceUntilIdle()
+
+        val runs = loaded(engine).workflows[0].runs
+        assertEquals(2, runs.count { it.run.id == 1L || it.run.id == 300L }, "重叠的 run 不该出现两次")
+        assertEquals(
+            com.github.ghactions.model.RunStatus.IN_PROGRESS,
+            runs.first { it.run.id == 1L }.run.status,
+            "重叠时应保留轮询侧更新的状态",
+        )
+    }
+
+    @Test
+    fun `加载更多失败不改变状态，可以再次尝试`() = runTest {
+        val transport = RecordingTransport(
+            { runsJson("completed", "success") },
+            responder = { url -> if ("/actions/workflows/" in url) HttpResponse(500, "", emptyMap()) else null },
+        )
+        val engine = engineWith(transport)
+        settled(engine)
+
+        engine.loadMore("CI")
+        advanceUntilIdle()
+
+        val workflow = loaded(engine).workflows[0]
+        assertEquals(1, workflow.runs.size, "失败不该改变已有数据")
+        assertTrue(workflow.canLoadMore, "失败不该被当成已到底，用户得能再点一次")
+    }
+
+    @Test
+    fun `分支过滤对历史记录同样生效`() = runTest {
+        val transport = RecordingTransport(
+            { runsJson("completed", "success", branch = "main") },
+            responder = { url ->
+                if ("/actions/workflows/" in url) {
+                    HttpResponse(200, historyJson(300, branch = "feature"), emptyMap())
+                } else {
+                    null
+                }
+            },
+        )
+        val engine = engineWith(transport, branchProvider = { "main" })
+        settled(engine)
+
+        engine.loadMore("CI")
+        advanceUntilIdle()
+        assertTrue(loaded(engine).workflows[0].runs.any { it.run.runNumber == 300 }, "前置条件：历史记录已加载")
+
+        engine.setBranchFilter(true)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertTrue(
+            loaded(engine).workflows[0].runs.none { it.run.runNumber == 300 },
+            "feature 分支的历史记录不该绕过分支过滤",
+        )
+    }
+
+    @Test
+    fun `仓库切换后历史记录被清空`() = runTest {
+        var currentRepo = repo
+        val transport = RecordingTransport(
+            { runsJson("completed", "success") },
+            responder = { url -> if ("/actions/workflows/" in url) HttpResponse(200, historyJson(300), emptyMap()) else null },
+        )
+        val engine = engineWith(transport, repoProvider = { currentRepo })
+        settled(engine)
+
+        engine.loadMore("CI")
+        advanceUntilIdle()
+        assertTrue(loaded(engine).workflows[0].runs.any { it.run.runNumber == 300 }, "前置条件：历史记录已加载")
+
+        currentRepo = RepoCoordinates("other", "repo")
+        engine.requestRefresh()
+        runCurrent()
+        advanceUntilIdle()
+
+        assertTrue(
+            loaded(engine).workflows[0].runs.none { it.run.runNumber == 300 },
+            "上一个仓库的历史记录不该混进新仓库的树里",
+        )
+    }
+
+    private companion object {
+        const val CI_WORKFLOW_ID = 98765L
     }
 }

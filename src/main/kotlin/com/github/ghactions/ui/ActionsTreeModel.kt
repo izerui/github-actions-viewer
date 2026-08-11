@@ -27,10 +27,19 @@ class ActionsTreeModel {
      */
     val swingModel: DefaultTreeModel = DefaultTreeModel(root, true)
 
-    fun apply(workflows: List<WorkflowNode>) {
+    /** [loadingWorkflows] 中的 workflow，其「加载更多」行显示为加载中。 */
+    fun apply(workflows: List<WorkflowNode>, loadingWorkflows: Set<String> = emptySet()) {
         syncChildren(root, workflows.map { WorkflowItem(it.name, it.runs.firstOrNull()?.run?.status) }) { node, index ->
             val workflow = workflows[index]
-            syncChildren(node, workflow.runs.map { RunItem(it.run) }) { runNode, runIndex ->
+            val runItems = workflow.runs.map { RunItem(it.run) }
+            val children = if (workflow.canLoadMore) {
+                runItems + LoadMoreItem(workflow.name, workflow.name in loadingWorkflows)
+            } else {
+                runItems
+            }
+            syncChildren(node, children) { runNode, runIndex ->
+                // 「加载更多」排在所有 run 之后，它没有下一层，下标也超出 runs 的范围。
+                if (runIndex >= workflow.runs.size) return@syncChildren
                 val jobs = workflow.runs[runIndex].jobs.orEmpty()
                 syncChildren(runNode, jobs.map { JobItem(it) }) { jobNode, jobIndex ->
                     val job = jobs[jobIndex]
@@ -51,8 +60,8 @@ class ActionsTreeModel {
      * （早先 `apply` 末尾的 `nodeStructureChanged(root)` 顺带产生过展开 root 的副作用，
      * 但它同时会清空 JTree 的展开态，已被移除；展开 root 的职责因此需要在这里显式承担。）
      */
-    fun applyTo(tree: JTree, workflows: List<WorkflowNode>) {
-        apply(workflows)
+    fun applyTo(tree: JTree, workflows: List<WorkflowNode>, loadingWorkflows: Set<String> = emptySet()) {
+        apply(workflows, loadingWorkflows)
         tree.expandPath(TreePath(root))
     }
 
