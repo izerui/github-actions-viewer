@@ -10,5 +10,6 @@ class ActionsToolWindowFactory : ToolWindowFactory, DumbAware {
         val panel = ActionsTreePanel(project)
         val content = toolWindow.contentManager.factory.createContent(panel, null, false)
         toolWindow.contentManager.addContent(content)
+        toolWindow.setTitleActions(panel.titleActions)
     }
 }

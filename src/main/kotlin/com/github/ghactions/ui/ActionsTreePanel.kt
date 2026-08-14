@@ -4,7 +4,6 @@ import com.github.ghactions.poll.ActionsPollingService
 import com.github.ghactions.poll.ViewState
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
-import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -53,6 +52,22 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
 
     private var branchFilterEnabled = false
 
+    val titleActions: List<AnAction> = listOf(
+        object : AnAction("刷新", "立即刷新", AllIcons.Actions.Refresh) {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+            override fun actionPerformed(e: AnActionEvent) = service.engine.requestRefresh()
+        },
+        object : ToggleAction("只看当前分支", "只显示当前分支的运行记录", AllIcons.Vcs.Branch) {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+            override fun isSelected(e: AnActionEvent): Boolean = branchFilterEnabled
+            override fun setSelected(e: AnActionEvent, state: Boolean) {
+                branchFilterEnabled = state
+                service.engine.setBranchFilter(state)
+            }
+        },
+        openInBrowserAction(),
+    )
+
     /**
      * 已展开但还没拿到 jobs 的 run。
      *
@@ -85,7 +100,6 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
         content.add(JBScrollPane(tree), CARD_TREE)
         content.add(emptyHolder, CARD_EMPTY)
 
-        add(createToolbar(), BorderLayout.NORTH)
         add(content, BorderLayout.CENTER)
         add(statusLabel, BorderLayout.SOUTH)
 
@@ -103,28 +117,7 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
         service.observe(::render)
     }
 
-    private fun createToolbar(): JPanel {
-        val group = DefaultActionGroup(
-            object : AnAction("刷新", "立即刷新", AllIcons.Actions.Refresh) {
-                override fun getActionUpdateThread() = ActionUpdateThread.EDT
-                override fun actionPerformed(e: AnActionEvent) = service.engine.requestRefresh()
-            },
-            object : ToggleAction("只看当前分支", "只显示当前分支的运行记录", AllIcons.Vcs.Branch) {
-                override fun getActionUpdateThread() = ActionUpdateThread.EDT
-                override fun isSelected(e: AnActionEvent): Boolean = branchFilterEnabled
-                override fun setSelected(e: AnActionEvent, state: Boolean) {
-                    branchFilterEnabled = state
-                    service.engine.setBranchFilter(state)
-                }
-            },
-            openInBrowserAction(),
-        )
-        val toolbar = ActionManager.getInstance().createActionToolbar("GitHubActionsViewer", group, true)
-        toolbar.targetComponent = tree
-        return JPanel(BorderLayout()).apply { add(toolbar.component, BorderLayout.WEST) }
-    }
-
-    /** 「在浏览器中打开」。工具栏与右键菜单共用同一份定义。 */
+    /** 「在浏览器中打开」。标题栏与右键菜单共用同一份定义。 */
     private fun openInBrowserAction(): AnAction =
         object : AnAction("在浏览器中打开", "打开选中运行的 GitHub 页面", AllIcons.General.Web) {
             override fun getActionUpdateThread() = ActionUpdateThread.EDT
