@@ -1,6 +1,8 @@
 package com.github.ghactions.ui
 
 import com.github.ghactions.model.Job
+import com.github.ghactions.model.RepoCoordinates
+import com.github.ghactions.model.RepositoryNode
 import com.github.ghactions.model.RunNode
 import com.github.ghactions.model.RunStatus
 import com.github.ghactions.model.Step
@@ -11,6 +13,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.time.Instant
 import javax.swing.JTree
+import javax.swing.tree.TreePath
 
 /**
  * 树在真实 JTree 上是否**看得见**。
@@ -20,8 +23,11 @@ import javax.swing.JTree
  * 「日志显示 Loaded、界面却一行没有」。
  */
 class ActionsTreeVisibilityTest {
-
-    private fun run(id: Long, number: Int, status: RunStatus = RunStatus.SUCCESS) = WorkflowRun(
+    private fun run(
+        id: Long,
+        number: Int,
+        status: RunStatus = RunStatus.SUCCESS,
+    ) = WorkflowRun(
         id = id,
         runNumber = number,
         workflowName = "CI",
@@ -39,6 +45,25 @@ class ActionsTreeVisibilityTest {
         // 用 false 能让断言更严格——root 若未展开，rowCount 会是 0 而非 1。
         tree.isRootVisible = false
         return tree to model
+    }
+
+    @Test
+    fun `仓库首次出现时默认展开且刷新不覆盖用户折叠`() {
+        val (tree, model) = treeWithModel()
+        val repository = RepoCoordinates("modexai", "maas-api")
+        val data = listOf(RepositoryNode(repository, listOf(WorkflowNode("CI", emptyList()))))
+
+        model.applyRepositoriesTo(tree, data)
+        model.expandRepositories(tree, setOf(repository))
+
+        val repositoryNode = model.root.getChildAt(0) as javax.swing.tree.DefaultMutableTreeNode
+        val repositoryPath = TreePath(arrayOf(model.root, repositoryNode))
+        assertTrue(tree.isExpanded(repositoryPath), "仓库节点首次出现时应默认展开")
+
+        tree.collapsePath(repositoryPath)
+        model.applyRepositoriesTo(tree, data)
+
+        assertTrue(!tree.isExpanded(repositoryPath), "刷新不应重新展开用户手动折叠的仓库")
     }
 
     @Test

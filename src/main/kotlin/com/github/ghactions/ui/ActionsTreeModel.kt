@@ -93,6 +93,17 @@ class ActionsTreeModel {
         tree.expandPath(TreePath(root))
     }
 
+    fun expandRepositories(
+        tree: JTree,
+        repositories: Set<RepoCoordinates>,
+    ) {
+        for (index in 0 until root.childCount) {
+            val node = root.getChildAt(index) as DefaultMutableTreeNode
+            val item = node.userObject as? RepositoryItem ?: continue
+            if (item.repository in repositories) tree.expandPath(TreePath(node.path))
+        }
+    }
+
     internal fun loadingKey(
         repository: RepoCoordinates?,
         workflowName: String,

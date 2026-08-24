@@ -84,6 +84,9 @@ class ActionsTreePanel(
      */
     private val pendingRuns = mutableSetOf<Long>()
 
+    /** 已经执行过默认展开的仓库；用户随后手动折叠时不再干预。 */
+    private val autoExpandedRepositories = mutableSetOf<com.github.ghactions.model.RepoCoordinates>()
+
     /** 上一次真正渲染到树上的数据，用于跳过无谓的重建。 */
     private var lastRenderedRepositories: List<com.github.ghactions.model.RepositoryNode>? = null
 
@@ -299,6 +302,10 @@ class ActionsTreePanel(
 
     private fun render(state: ViewState) {
         if (state is ViewState.WorkspaceLoaded && state.repositories.isNotEmpty()) {
+            val currentRepositories = state.repositories.mapTo(HashSet()) { it.repository }
+            autoExpandedRepositories.retainAll(currentRepositories)
+            val repositoriesToExpand = currentRepositories - autoExpandedRepositories
+
             if (state.repositories != lastRenderedRepositories) {
                 val expandedPaths =
                     (0 until tree.rowCount)
@@ -307,6 +314,8 @@ class ActionsTreePanel(
 
                 treeModel.applyRepositoriesTo(tree, state.repositories, loadingWorkflows.toSet())
                 expandedPaths.forEach { tree.expandPath(it) }
+                treeModel.expandRepositories(tree, repositoriesToExpand)
+                autoExpandedRepositories.addAll(repositoriesToExpand)
                 lastRenderedRepositories = state.repositories
             }
             val arrived =
@@ -327,6 +336,7 @@ class ActionsTreePanel(
                     "  最后更新于 $ago"
                 }
         } else {
+            autoExpandedRepositories.clear()
             lastRenderedRepositories = null
             emptyHolder.removeAll()
             emptyHolder.add(EmptyStatePanel.forState(state), BorderLayout.CENTER)
