@@ -3,7 +3,10 @@ package com.github.ghactions.model
 import java.time.Instant
 
 /** GitHub 仓库坐标。 */
-data class RepoCoordinates(val owner: String, val name: String) {
+data class RepoCoordinates(
+    val owner: String,
+    val name: String,
+) {
     override fun toString(): String = "$owner/$name"
 }
 
@@ -41,6 +44,14 @@ data class Job(
 data class RunNode(
     val run: WorkflowRun,
     val jobs: List<Job>?,
+)
+
+/** 树上的一个仓库及其工作流。 */
+data class RepositoryNode(
+    val repository: RepoCoordinates,
+    val workflows: List<WorkflowNode>,
+    /** Repository-local loading/error state; null means the latest poll succeeded. */
+    val statusMessage: String? = null,
 )
 
 /**

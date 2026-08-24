@@ -15,9 +15,9 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.PopupHandler
 import com.intellij.ui.TreeSpeedSearch
-import com.intellij.ui.hover.TreeHoverListener
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.hover.TreeHoverListener
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.text.DateFormatUtil
 import java.awt.BorderLayout
@@ -27,8 +27,8 @@ import java.awt.event.HierarchyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.JLabel
-import javax.swing.JTree
 import javax.swing.JPanel
+import javax.swing.JTree
 import javax.swing.SwingConstants
 import javax.swing.event.TreeExpansionEvent
 import javax.swing.event.TreeExpansionListener
@@ -38,8 +38,9 @@ import javax.swing.tree.TreeSelectionModel
 private const val CARD_TREE = "tree"
 private const val CARD_EMPTY = "empty"
 
-class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>(BorderLayout()) {
-
+class ActionsTreePanel(
+    private val project: Project,
+) : JBPanel<ActionsTreePanel>(BorderLayout()) {
     private val service = ActionsPollingService.getInstance(project)
     private val treeModel = ActionsTreeModel()
     private val tree = Tree(treeModel.swingModel)
@@ -52,21 +53,28 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
 
     private var branchFilterEnabled = false
 
-    val titleActions: List<AnAction> = listOf(
-        object : AnAction("刷新", "立即刷新", AllIcons.Actions.Refresh) {
-            override fun getActionUpdateThread() = ActionUpdateThread.EDT
-            override fun actionPerformed(e: AnActionEvent) = service.engine.requestRefresh()
-        },
-        object : ToggleAction("只看当前分支", "只显示当前分支的运行记录", AllIcons.Vcs.Branch) {
-            override fun getActionUpdateThread() = ActionUpdateThread.EDT
-            override fun isSelected(e: AnActionEvent): Boolean = branchFilterEnabled
-            override fun setSelected(e: AnActionEvent, state: Boolean) {
-                branchFilterEnabled = state
-                service.engine.setBranchFilter(state)
-            }
-        },
-        openInBrowserAction(),
-    )
+    val titleActions: List<AnAction> =
+        listOf(
+            object : AnAction("刷新", "立即刷新", AllIcons.Actions.Refresh) {
+                override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+                override fun actionPerformed(e: AnActionEvent) = service.requestRefresh()
+            },
+            object : ToggleAction("只看当前分支", "只显示当前分支的运行记录", AllIcons.Vcs.Branch) {
+                override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+                override fun isSelected(e: AnActionEvent): Boolean = branchFilterEnabled
+
+                override fun setSelected(
+                    e: AnActionEvent,
+                    state: Boolean,
+                ) {
+                    branchFilterEnabled = state
+                    service.setBranchFilter(state)
+                }
+            },
+            openInBrowserAction(),
+        )
 
     /**
      * 已展开但还没拿到 jobs 的 run。
@@ -77,7 +85,7 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
     private val pendingRuns = mutableSetOf<Long>()
 
     /** 上一次真正渲染到树上的数据，用于跳过无谓的重建。 */
-    private var lastRenderedWorkflows: List<com.github.ghactions.model.WorkflowNode>? = null
+    private var lastRenderedRepositories: List<com.github.ghactions.model.RepositoryNode>? = null
 
     /**
      * 正在加载更多的 workflow。
@@ -88,7 +96,7 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
     private val loadingWorkflows = mutableSetOf<String>()
 
     init {
-        // 显示 WORKFLOWS 分组标题（渲染器会把根节点画成灰色粗体）
+        // 显示 REPOSITORIES 分组标题（渲染器会把根节点画成灰色粗体）
         tree.isRootVisible = true
         tree.showsRootHandles = true
         tree.cellRenderer = rowRenderer
@@ -113,7 +121,7 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
         // observe 提交的 EDT 协程要等到调度器空闲才开始 collect，这中间存在一个窗口期；
         // 若不先渲染，CardLayout 会停在初始的树卡片上，显示 Tree 组件默认的
         // "Nothing to show"，而不是我们的「正在加载…」。
-        render(service.engine.state.value)
+        render(service.state.value)
         service.observe(::render)
     }
 
@@ -121,9 +129,11 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
     private fun openInBrowserAction(): AnAction =
         object : AnAction("在浏览器中打开", "打开选中运行的 GitHub 页面", AllIcons.General.Web) {
             override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
             override fun update(e: AnActionEvent) {
                 e.presentation.isEnabled = selectedRunUrl() != null
             }
+
             override fun actionPerformed(e: AnActionEvent) {
                 selectedRunUrl()?.let(::openInBrowser)
             }
@@ -133,9 +143,11 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
     private fun copyLinkAction(): AnAction =
         object : AnAction("复制链接", "复制该次运行的 GitHub 页面地址", AllIcons.Actions.Copy) {
             override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
             override fun update(e: AnActionEvent) {
                 e.presentation.isEnabled = selectedRunUrl() != null
             }
+
             override fun actionPerformed(e: AnActionEvent) {
                 selectedRunUrl()?.let { CopyPasteManager.getInstance().setContents(StringSelection(it)) }
             }
@@ -147,38 +159,43 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
      */
     private fun wireHoverAction() {
         object : TreeHoverListener() {
-            override fun onHover(tree: JTree, row: Int) {
+            override fun onHover(
+                tree: JTree,
+                row: Int,
+            ) {
                 if (rowRenderer.hoveredRow == row) return
                 rowRenderer.hoveredRow = row
                 tree.repaint()
             }
         }.addTo(tree)
 
-        tree.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent) {
-                val row = tree.getRowForLocation(e.x, e.y).takeIf { it >= 0 } ?: return
-                val node = tree.getPathForRow(row)?.lastPathComponent as? DefaultMutableTreeNode ?: return
+        tree.addMouseListener(
+            object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    val row = tree.getRowForLocation(e.x, e.y).takeIf { it >= 0 } ?: return
+                    val node = tree.getPathForRow(row)?.lastPathComponent as? DefaultMutableTreeNode ?: return
 
-                // 「加载更多」整行都是按钮：这一行没有别的可点内容，
-                // 不必像 run 行那样把命中区限定在右端的图标上。
-                val more = node.userObject as? LoadMoreItem
-                if (more != null) {
-                    if (!more.loading) requestLoadMore(more.workflowName)
+                    // 「加载更多」整行都是按钮：这一行没有别的可点内容，
+                    // 不必像 run 行那样把命中区限定在右端的图标上。
+                    val more = node.userObject as? LoadMoreItem
+                    if (more != null) {
+                        if (!more.loading) requestLoadMore(more)
+                        e.consume()
+                        return
+                    }
+
+                    val bounds = tree.getRowBounds(row) ?: return
+                    val actionWidth = rowRenderer.actionWidth()
+                    if (actionWidth <= 0) return
+                    // 命中判断：按钮贴在该行内容的最右端
+                    if (e.x < bounds.x + bounds.width - actionWidth) return
+
+                    val url = (node.userObject as? RunItem)?.run?.htmlUrl?.ifEmpty { null } ?: return
+                    openInBrowser(url)
                     e.consume()
-                    return
                 }
-
-                val bounds = tree.getRowBounds(row) ?: return
-                val actionWidth = rowRenderer.actionWidth()
-                if (actionWidth <= 0) return
-                // 命中判断：按钮贴在该行内容的最右端
-                if (e.x < bounds.x + bounds.width - actionWidth) return
-
-                val url = (node.userObject as? RunItem)?.run?.htmlUrl?.ifEmpty { null } ?: return
-                openInBrowser(url)
-                e.consume()
-            }
-        })
+            },
+        )
     }
 
     /** 右键菜单。IDEA 里到处都是这种交互，用户不用学。 */
@@ -200,32 +217,38 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
 
     /** 展开状态直接驱动 jobs 的按需拉取——用户看什么，才请求什么。 */
     private fun wireExpansionTracking() {
-        tree.addTreeExpansionListener(object : TreeExpansionListener {
-            override fun treeExpanded(event: TreeExpansionEvent) = update(event, true)
-            override fun treeCollapsed(event: TreeExpansionEvent) = update(event, false)
+        tree.addTreeExpansionListener(
+            object : TreeExpansionListener {
+                override fun treeExpanded(event: TreeExpansionEvent) = update(event, true)
 
-            private fun update(event: TreeExpansionEvent, expanded: Boolean) {
-                val node = event.path.lastPathComponent as? DefaultMutableTreeNode ?: return
-                val item = node.userObject as? RunItem ?: return
-                service.setExpanded(item.run.id, expanded)
+                override fun treeCollapsed(event: TreeExpansionEvent) = update(event, false)
 
-                // 展开一个还没有子节点的 run —— 数据要等一轮网络往返才到，
-                // 此刻立即让它转圈，用户才知道自己那一下点生效了。
-                if (expanded && node.childCount == 0) {
-                    pendingRuns.add(item.run.id)
-                } else if (!expanded) {
-                    pendingRuns.remove(item.run.id)
+                private fun update(
+                    event: TreeExpansionEvent,
+                    expanded: Boolean,
+                ) {
+                    val node = event.path.lastPathComponent as? DefaultMutableTreeNode ?: return
+                    val item = node.userObject as? RunItem ?: return
+                    service.setExpanded(item.run.id, expanded)
+
+                    // 展开一个还没有子节点的 run —— 数据要等一轮网络往返才到，
+                    // 此刻立即让它转圈，用户才知道自己那一下点生效了。
+                    if (expanded && node.childCount == 0) {
+                        pendingRuns.add(item.run.id)
+                    } else if (!expanded) {
+                        pendingRuns.remove(item.run.id)
+                    }
+                    applyLoadingIndicator()
                 }
-                applyLoadingIndicator()
-            }
-        })
+            },
+        )
     }
 
     /** 面板不在屏幕上显示时彻底暂停轮询，重新显示时立即强刷一次。 */
     private fun wireVisibilityTracking() {
         addHierarchyListener { event ->
             if (event.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong() != 0L) {
-                service.engine.setVisible(isShowing)
+                service.setVisible(isShowing)
             }
         }
     }
@@ -252,19 +275,21 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
      * 发起一次加载更多。重复点击被忽略——一次请求还没回来，再点也只是白发请求。
      * 无论成败都要摘掉转圈标记：失败时引擎不发布新状态，否则那一行会一直转下去。
      */
-    private fun requestLoadMore(workflowName: String) {
-        if (!loadingWorkflows.add(workflowName)) return
+    private fun requestLoadMore(item: LoadMoreItem) {
+        val repository = item.repository ?: return
+        val key = treeModel.loadingKey(repository, item.workflowName)
+        if (!loadingWorkflows.add(key)) return
         refreshLoadMoreRows()
-        service.loadMore(workflowName) {
-            loadingWorkflows.remove(workflowName)
+        service.loadMore(repository, item.workflowName) {
+            loadingWorkflows.remove(key)
             refreshLoadMoreRows()
         }
     }
 
     /** 只重画「加载更多」那几行的状态。节点实例复用，展开态不受影响。 */
     private fun refreshLoadMoreRows() {
-        val workflows = lastRenderedWorkflows ?: return
-        treeModel.applyTo(tree, workflows, loadingWorkflows.toSet())
+        val repositories = lastRenderedRepositories ?: return
+        treeModel.applyRepositoriesTo(tree, repositories, loadingWorkflows.toSet())
     }
 
     private fun applyLoadingIndicator() {
@@ -273,40 +298,36 @@ class ActionsTreePanel(private val project: Project) : JBPanel<ActionsTreePanel>
     }
 
     private fun render(state: ViewState) {
-        if (state is ViewState.Loaded && state.workflows.isNotEmpty()) {
-            // 数据没变就别动树。Loaded 每轮都携带新的 lastUpdated，若不加这道判断，
-            // 哪怕 ETag 命中 304、内容一模一样，也会把整棵树重建一遍并触发大量重绘。
-            if (state.workflows != lastRenderedWorkflows) {
-                // 视图层通用兜底：apply 前快照展开态，apply 后逐一恢复。
-                // 正常路径下节点实例复用，展开态本就保持，这里是无害的幂等操作；
-                // 但它同时覆盖了 ActionsTreeModel 里节点换位分支（先 remove 后 insert 会让
-                // JTree 丢弃该子树展开态且不派发 treeCollapsed）等结构事件路径。
-                // 因为节点实例被复用，快照下来的 TreePath 在 apply 之后依然有效，expandPath 幂等。
-                val expandedPaths = (0 until tree.rowCount)
-                    .mapNotNull { tree.getPathForRow(it) }
-                    .filter { tree.isExpanded(it) }
+        if (state is ViewState.WorkspaceLoaded && state.repositories.isNotEmpty()) {
+            if (state.repositories != lastRenderedRepositories) {
+                val expandedPaths =
+                    (0 until tree.rowCount)
+                        .mapNotNull { tree.getPathForRow(it) }
+                        .filter { tree.isExpanded(it) }
 
-                treeModel.applyTo(tree, state.workflows, loadingWorkflows.toSet())
-
+                treeModel.applyRepositoriesTo(tree, state.repositories, loadingWorkflows.toSet())
                 expandedPaths.forEach { tree.expandPath(it) }
-                lastRenderedWorkflows = state.workflows
+                lastRenderedRepositories = state.repositories
             }
-            // jobs 已到达的 run 停止转圈
-            val arrived = state.workflows.asSequence()
-                .flatMap { it.runs.asSequence() }
-                .filter { it.jobs != null }
-                .map { it.run.id }
-                .toSet()
+            val arrived =
+                state.repositories
+                    .asSequence()
+                    .flatMap { it.workflows.asSequence() }
+                    .flatMap { it.runs.asSequence() }
+                    .filter { it.jobs != null }
+                    .map { it.run.id }
+                    .toSet()
             if (pendingRuns.removeAll(arrived)) applyLoadingIndicator()
             cards.show(content, CARD_TREE)
             val ago = DateFormatUtil.formatBetweenDates(state.lastUpdated.toEpochMilli(), System.currentTimeMillis())
-            statusLabel.text = if (state.degraded) {
-                "  最后更新于 $ago · API 配额偏低，已降低刷新频率"
-            } else {
-                "  最后更新于 $ago"
-            }
+            statusLabel.text =
+                if (state.degraded) {
+                    "  最后更新于 $ago · API 配额偏低，已降低刷新频率"
+                } else {
+                    "  最后更新于 $ago"
+                }
         } else {
-            lastRenderedWorkflows = null
+            lastRenderedRepositories = null
             emptyHolder.removeAll()
             emptyHolder.add(EmptyStatePanel.forState(state), BorderLayout.CENTER)
             emptyHolder.revalidate()

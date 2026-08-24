@@ -21,9 +21,38 @@ class GitHubActionsClient(
     private val tokenProvider: GhCliTokenProvider,
     private val etags: EtagCache,
 ) {
-
     @Volatile
     private var cachedToken: String? = null
+    private val tokenLock = Any()
+    private var cachedTokenFailure: TokenResult? = null
+    private var tokenFailureCachedAtNanos: Long = 0
+
+    private fun accessToken(): TokenResult {
+        cachedToken?.let { return TokenResult.Success(it) }
+        return synchronized(tokenLock) {
+            cachedToken?.let { return@synchronized TokenResult.Success(it) }
+            val now = System.nanoTime()
+            cachedTokenFailure
+                ?.takeIf { now - tokenFailureCachedAtNanos < TOKEN_FAILURE_CACHE_NANOS }
+                ?.let { return@synchronized it }
+
+            when (val result = tokenProvider.token()) {
+                is TokenResult.Success -> {
+                    result.also {
+                        cachedToken = it.token
+                        cachedTokenFailure = null
+                    }
+                }
+
+                else -> {
+                    result.also {
+                        cachedTokenFailure = it
+                        tokenFailureCachedAtNanos = now
+                    }
+                }
+            }
+        }
+    }
 
     /**
      * 默认只取最近 [DEFAULT_RUN_LIMIT] 条。
@@ -32,7 +61,10 @@ class GitHubActionsClient(
      * 两个我们完全用不到的字段就占了七成，且 REST 接口无法筛选字段。取 30 条要传
      * 437KB、在慢网络下要好几秒；而用户真正关心的就是最近几条。
      */
-    fun listRuns(repo: RepoCoordinates, limit: Int = DEFAULT_RUN_LIMIT): ApiResult<List<WorkflowRun>> =
+    fun listRuns(
+        repo: RepoCoordinates,
+        limit: Int = DEFAULT_RUN_LIMIT,
+    ): ApiResult<List<WorkflowRun>> =
         fetch(
             cacheKey = "runs:$repo",
             url = "$API_BASE/repos/${repo.owner}/${repo.name}/actions/runs?per_page=$limit",
@@ -53,12 +85,16 @@ class GitHubActionsClient(
     ): ApiResult<List<WorkflowRun>> =
         fetch(
             cacheKey = null,
-            url = "$API_BASE/repos/${repo.owner}/${repo.name}/actions/workflows/$workflowId/runs" +
-                "?per_page=$perPage&page=$page",
+            url =
+                "$API_BASE/repos/${repo.owner}/${repo.name}/actions/workflows/$workflowId/runs" +
+                    "?per_page=$perPage&page=$page",
             parse = ::parseRuns,
         )
 
-    fun listJobs(repo: RepoCoordinates, runId: Long): ApiResult<List<Job>> =
+    fun listJobs(
+        repo: RepoCoordinates,
+        runId: Long,
+    ): ApiResult<List<Job>> =
         fetch(
             cacheKey = "jobs:$repo:$runId",
             url = "$API_BASE/repos/${repo.owner}/${repo.name}/actions/runs/$runId/jobs?per_page=100",
@@ -66,27 +102,34 @@ class GitHubActionsClient(
         )
 
     /** [cacheKey] 为 null 时完全不参与 ETag：既不发条件请求头，也不写回缓存。 */
-    private fun <T> fetch(cacheKey: String?, url: String, parse: (String) -> T): ApiResult<T> {
+    private fun <T> fetch(
+        cacheKey: String?,
+        url: String,
+        parse: (String) -> T,
+    ): ApiResult<T> {
         // 缓存命中则复用；否则取一次 token 并缓存，避免每次请求都 fork gh 子进程。
-        val token = cachedToken ?: when (val result = tokenProvider.token()) {
-            is TokenResult.Success -> result.token.also { cachedToken = it }
-            TokenResult.GhNotInstalled -> return ApiResult.GhNotInstalled
-            TokenResult.GhNotLoggedIn -> return ApiResult.GhNotLoggedIn
-        }
+        val token =
+            when (val result = accessToken()) {
+                is TokenResult.Success -> result.token
+                TokenResult.GhNotInstalled -> return ApiResult.GhNotInstalled
+                TokenResult.GhNotLoggedIn -> return ApiResult.GhNotLoggedIn
+            }
 
-        val headers = buildMap {
-            put("Authorization", "Bearer $token")
-            put("Accept", "application/vnd.github+json")
-            put("X-GitHub-Api-Version", "2022-11-28")
-            cacheKey?.let { key -> etags.get(key)?.let { put("If-None-Match", it) } }
-        }
+        val headers =
+            buildMap {
+                put("Authorization", "Bearer $token")
+                put("Accept", "application/vnd.github+json")
+                put("X-GitHub-Api-Version", "2022-11-28")
+                cacheKey?.let { key -> etags.get(key)?.let { put("If-None-Match", it) } }
+            }
 
-        val response = try {
-            transport.get(url, headers)
-        } catch (e: Exception) {
-            // 异常消息可能来自网络栈，绝不会包含 token，但仍只取 message 而非整个栈
-            return ApiResult.Error(e.message ?: e.javaClass.simpleName)
-        }
+        val response =
+            try {
+                transport.get(url, headers)
+            } catch (e: Exception) {
+                // 异常消息可能来自网络栈，绝不会包含 token，但仍只取 message 而非整个栈
+                return ApiResult.Error(e.message ?: e.javaClass.simpleName)
+            }
 
         val remaining = response.header(HEADER_REMAINING)?.toIntOrNull()
 
@@ -100,11 +143,16 @@ class GitHubActionsClient(
                 }
             }
 
-            response.statusCode == 304 -> ApiResult.NotModified(remaining)
+            response.statusCode == 304 -> {
+                ApiResult.NotModified(remaining)
+            }
 
             response.statusCode == 401 -> {
                 // token 已失效，清空缓存，下次请求重新获取
-                cachedToken = null
+                synchronized(tokenLock) {
+                    cachedToken = null
+                    cachedTokenFailure = null
+                }
                 ApiResult.GhNotLoggedIn
             }
 
@@ -119,11 +167,14 @@ class GitHubActionsClient(
                 }
             }
 
-            else -> ApiResult.Error("请求失败（HTTP ${response.statusCode}）")
+            else -> {
+                ApiResult.Error("请求失败（HTTP ${response.statusCode}）")
+            }
         }
     }
 
     internal companion object {
+        private const val TOKEN_FAILURE_CACHE_NANOS = 5_000_000_000L
         const val DEFAULT_RUN_LIMIT = 15
 
         /** 「加载更多」每次追加的条数。与首屏一致，用户对「一页」的预期不会跳。 */

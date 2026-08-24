@@ -11,18 +11,21 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class GitHubActionsClientTest {
-
     private val repo = RepoCoordinates("octocat", "hello-world")
 
-    private val runsJson = """
+    private val runsJson =
+        """
         {"workflow_runs":[{"id":1,"run_number":419,"name":"CI","head_branch":"main",
         "status":"completed","conclusion":"success",
         "html_url":"https://github.com/octocat/hello-world/actions/runs/1",
         "updated_at":"2026-08-10T07:30:00Z"}]}
-    """.trimIndent()
+        """.trimIndent()
 
     private fun client(
         transport: HttpTransport,
@@ -32,13 +35,15 @@ class GitHubActionsClientTest {
 
     @Test
     fun `成功返回解析后的 runs`() {
-        val transport = HttpTransport { _, _ ->
-            HttpResponse(200, runsJson, mapOf("ETag" to "\"v1\"", "X-RateLimit-Remaining" to "4999"))
-        }
+        val transport =
+            HttpTransport { _, _ ->
+                HttpResponse(200, runsJson, mapOf("ETag" to "\"v1\"", "X-RateLimit-Remaining" to "4999"))
+            }
 
         val result = client(transport).listRuns(repo)
 
         val data = assertInstanceOf(ApiResult.Data::class.java, result)
+
         @Suppress("UNCHECKED_CAST")
         val runs = data.value as List<com.github.ghactions.model.WorkflowRun>
         assertEquals(1, runs.size)
@@ -50,11 +55,12 @@ class GitHubActionsClientTest {
     fun `按 workflow 分页拉取历史运行记录`() {
         var capturedUrl: String? = null
         var capturedHeaders: Map<String, String>? = null
-        val transport = HttpTransport { url, headers ->
-            capturedUrl = url
-            capturedHeaders = headers
-            HttpResponse(200, runsJson, mapOf("ETag" to "\"v1\"", "X-RateLimit-Remaining" to "4999"))
-        }
+        val transport =
+            HttpTransport { url, headers ->
+                capturedUrl = url
+                capturedHeaders = headers
+                HttpResponse(200, runsJson, mapOf("ETag" to "\"v1\"", "X-RateLimit-Remaining" to "4999"))
+            }
         val etags = EtagCache().apply { put("runs:$repo", "\"stale\"") }
 
         val result = client(transport, etags).listWorkflowRuns(repo, workflowId = 98765, page = 2)
@@ -70,9 +76,10 @@ class GitHubActionsClientTest {
 
     @Test
     fun `分页请求不污染轮询的 ETag 缓存`() {
-        val transport = HttpTransport { _, _ ->
-            HttpResponse(200, runsJson, mapOf("ETag" to "\"page2\"", "X-RateLimit-Remaining" to "4999"))
-        }
+        val transport =
+            HttpTransport { _, _ ->
+                HttpResponse(200, runsJson, mapOf("ETag" to "\"page2\"", "X-RateLimit-Remaining" to "4999"))
+            }
         val etags = EtagCache().apply { put("runs:$repo", "\"v1\"") }
 
         client(transport, etags).listWorkflowRuns(repo, workflowId = 98765, page = 2)
@@ -84,11 +91,12 @@ class GitHubActionsClientTest {
     fun `请求带上必需的 GitHub 头与认证`() {
         var capturedUrl: String? = null
         var capturedHeaders: Map<String, String>? = null
-        val transport = HttpTransport { url, headers ->
-            capturedUrl = url
-            capturedHeaders = headers
-            HttpResponse(200, runsJson, emptyMap())
-        }
+        val transport =
+            HttpTransport { url, headers ->
+                capturedUrl = url
+                capturedHeaders = headers
+                HttpResponse(200, runsJson, emptyMap())
+            }
 
         client(transport).listRuns(repo, limit = 30)
 
@@ -105,10 +113,11 @@ class GitHubActionsClientTest {
     @Test
     fun `默认只取最近 15 条`() {
         var capturedUrl: String? = null
-        val transport = HttpTransport { url, _ ->
-            capturedUrl = url
-            HttpResponse(200, runsJson, emptyMap())
-        }
+        val transport =
+            HttpTransport { url, _ ->
+                capturedUrl = url
+                HttpResponse(200, runsJson, emptyMap())
+            }
 
         // 每条 run 约 12KB，其中七成是用不到的 repository 字段且无法筛选，
         // 取 30 条要传 437KB。默认值直接决定首次加载要等多久。
@@ -124,10 +133,11 @@ class GitHubActionsClientTest {
     fun `首次请求不带 If-None-Match 后续请求带上缓存的 etag`() {
         val etags = EtagCache()
         val seen = mutableListOf<String?>()
-        val transport = HttpTransport { _, headers ->
-            seen += headers["If-None-Match"]
-            HttpResponse(200, runsJson, mapOf("ETag" to "\"v1\""))
-        }
+        val transport =
+            HttpTransport { _, headers ->
+                seen += headers["If-None-Match"]
+                HttpResponse(200, runsJson, mapOf("ETag" to "\"v1\""))
+            }
 
         val c = client(transport, etags)
         c.listRuns(repo)
@@ -139,9 +149,10 @@ class GitHubActionsClientTest {
 
     @Test
     fun `304 返回 NotModified`() {
-        val transport = HttpTransport { _, _ ->
-            HttpResponse(304, "", mapOf("X-RateLimit-Remaining" to "4000"))
-        }
+        val transport =
+            HttpTransport { _, _ ->
+                HttpResponse(304, "", mapOf("X-RateLimit-Remaining" to "4000"))
+            }
 
         val result = client(transport).listRuns(repo)
 
@@ -152,12 +163,14 @@ class GitHubActionsClientTest {
     @Test
     fun `403 且配额耗尽返回 RateLimited`() {
         val resetEpoch = 1_786_000_000L
-        val transport = HttpTransport { _, _ ->
-            HttpResponse(
-                403, "",
-                mapOf("X-RateLimit-Remaining" to "0", "X-RateLimit-Reset" to resetEpoch.toString()),
-            )
-        }
+        val transport =
+            HttpTransport { _, _ ->
+                HttpResponse(
+                    403,
+                    "",
+                    mapOf("X-RateLimit-Remaining" to "0", "X-RateLimit-Reset" to resetEpoch.toString()),
+                )
+            }
 
         val result = client(transport).listRuns(repo)
 
@@ -167,9 +180,10 @@ class GitHubActionsClientTest {
 
     @Test
     fun `403 但配额充足返回 Error`() {
-        val transport = HttpTransport { _, _ ->
-            HttpResponse(403, "forbidden", mapOf("X-RateLimit-Remaining" to "4000"))
-        }
+        val transport =
+            HttpTransport { _, _ ->
+                HttpResponse(403, "forbidden", mapOf("X-RateLimit-Remaining" to "4000"))
+            }
 
         assertInstanceOf(ApiResult.Error::class.java, client(transport).listRuns(repo))
     }
@@ -192,10 +206,11 @@ class GitHubActionsClientTest {
     @Test
     fun `gh 未安装时不发起请求`() {
         var called = false
-        val transport = HttpTransport { _, _ ->
-            called = true
-            HttpResponse(200, runsJson, emptyMap())
-        }
+        val transport =
+            HttpTransport { _, _ ->
+                called = true
+                HttpResponse(200, runsJson, emptyMap())
+            }
 
         val result = client(transport, token = null).listRuns(repo)
 
@@ -214,14 +229,16 @@ class GitHubActionsClientTest {
     @Test
     fun `listJobs 请求正确的地址并解析 steps`() {
         var capturedUrl: String? = null
-        val jobsJson = """
+        val jobsJson =
+            """
             {"jobs":[{"id":88,"name":"build","status":"completed","conclusion":"success",
             "steps":[{"number":1,"name":"Checkout","status":"completed","conclusion":"success"}]}]}
-        """.trimIndent()
-        val transport = HttpTransport { url, _ ->
-            capturedUrl = url
-            HttpResponse(200, jobsJson, emptyMap())
-        }
+            """.trimIndent()
+        val transport =
+            HttpTransport { url, _ ->
+                capturedUrl = url
+                HttpResponse(200, jobsJson, emptyMap())
+            }
 
         val result = client(transport).listJobs(repo, 12345L)
 
@@ -230,6 +247,7 @@ class GitHubActionsClientTest {
             capturedUrl,
         )
         val data = assertInstanceOf(ApiResult.Data::class.java, result)
+
         @Suppress("UNCHECKED_CAST")
         val jobs = data.value as List<com.github.ghactions.model.Job>
         assertEquals(1, jobs.single().steps.size)
@@ -242,10 +260,11 @@ class GitHubActionsClientTest {
         client(transport, etags).listRuns(repo)
 
         val jobsSeen = mutableListOf<String?>()
-        val jobsTransport = HttpTransport { _, headers ->
-            jobsSeen += headers["If-None-Match"]
-            HttpResponse(200, """{"jobs":[]}""", emptyMap())
-        }
+        val jobsTransport =
+            HttpTransport { _, headers ->
+                jobsSeen += headers["If-None-Match"]
+                HttpResponse(200, """{"jobs":[]}""", emptyMap())
+            }
         client(jobsTransport, etags).listJobs(repo, 999L)
 
         assertNull(jobsSeen.single())
@@ -256,10 +275,11 @@ class GitHubActionsClientTest {
     @Test
     fun `token 只获取一次并被复用`() {
         val runnerCalls = AtomicInteger(0)
-        val runner = CommandRunner {
-            runnerCalls.incrementAndGet()
-            CommandOutput(0, "gho_test", "")
-        }
+        val runner =
+            CommandRunner {
+                runnerCalls.incrementAndGet()
+                CommandOutput(0, "gho_test", "")
+            }
         val transport = HttpTransport { _, _ -> HttpResponse(200, runsJson, emptyMap()) }
         val client = GitHubActionsClient(transport, GhCliTokenProvider(runner), EtagCache())
 
@@ -271,19 +291,83 @@ class GitHubActionsClientTest {
     }
 
     @Test
+    fun `并发首次请求只获取一次 token`() {
+        val runnerCalls = AtomicInteger(0)
+        val runner =
+            CommandRunner {
+                runnerCalls.incrementAndGet()
+                Thread.sleep(50)
+                CommandOutput(0, "gho_test", "")
+            }
+        val transport = HttpTransport { _, _ -> HttpResponse(200, runsJson, emptyMap()) }
+        val client = GitHubActionsClient(transport, GhCliTokenProvider(runner), EtagCache())
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(4)
+
+        try {
+            val futures =
+                (1..4).map { index ->
+                    executor.submit<ApiResult<List<com.github.ghactions.model.WorkflowRun>>> {
+                        start.await()
+                        client.listRuns(RepoCoordinates("owner", "repo-$index"))
+                    }
+                }
+            start.countDown()
+            futures.forEach { assertInstanceOf(ApiResult.Data::class.java, it.get(2, TimeUnit.SECONDS)) }
+        } finally {
+            executor.shutdownNow()
+        }
+
+        assertEquals(1, runnerCalls.get())
+    }
+
+    @Test
+    fun `并发未登录请求只探测一次 token`() {
+        val runnerCalls = AtomicInteger(0)
+        val runner =
+            CommandRunner {
+                runnerCalls.incrementAndGet()
+                Thread.sleep(50)
+                CommandOutput(1, "not logged in", "")
+            }
+        val transport = HttpTransport { _, _ -> error("未登录时不应发 HTTP 请求") }
+        val client = GitHubActionsClient(transport, GhCliTokenProvider(runner), EtagCache())
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(4)
+
+        try {
+            val futures =
+                (1..4).map { index ->
+                    executor.submit<ApiResult<List<com.github.ghactions.model.WorkflowRun>>> {
+                        start.await()
+                        client.listRuns(RepoCoordinates("owner", "repo-$index"))
+                    }
+                }
+            start.countDown()
+            futures.forEach { assertSame(ApiResult.GhNotLoggedIn, it.get(2, TimeUnit.SECONDS)) }
+        } finally {
+            executor.shutdownNow()
+        }
+
+        assertEquals(1, runnerCalls.get())
+    }
+
+    @Test
     fun `401 后会重新获取 token`() {
         val runnerCalls = AtomicInteger(0)
-        val runner = CommandRunner {
-            runnerCalls.incrementAndGet()
-            CommandOutput(0, "gho_test", "")
-        }
-        val statuses = listOf(200, 401, 200).iterator()
-        val transport = HttpTransport { _, _ ->
-            when (statuses.next()) {
-                200 -> HttpResponse(200, runsJson, emptyMap())
-                else -> HttpResponse(401, "", emptyMap())
+        val runner =
+            CommandRunner {
+                runnerCalls.incrementAndGet()
+                CommandOutput(0, "gho_test", "")
             }
-        }
+        val statuses = listOf(200, 401, 200).iterator()
+        val transport =
+            HttpTransport { _, _ ->
+                when (statuses.next()) {
+                    200 -> HttpResponse(200, runsJson, emptyMap())
+                    else -> HttpResponse(401, "", emptyMap())
+                }
+            }
         val client = GitHubActionsClient(transport, GhCliTokenProvider(runner), EtagCache())
 
         client.listRuns(repo) // 200，取一次 token 并缓存

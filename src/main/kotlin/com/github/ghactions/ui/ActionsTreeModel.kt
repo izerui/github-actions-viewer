@@ -1,5 +1,7 @@
 package com.github.ghactions.ui
 
+import com.github.ghactions.model.RepoCoordinates
+import com.github.ghactions.model.RepositoryNode
 import com.github.ghactions.model.WorkflowNode
 import javax.swing.JTree
 import javax.swing.tree.DefaultMutableTreeNode
@@ -14,8 +16,7 @@ import javax.swing.tree.TreePath
  * 却不打断用户的唯一办法。
  */
 class ActionsTreeModel {
-
-    val root: DefaultMutableTreeNode = DefaultMutableTreeNode("WORKFLOWS")
+    val root: DefaultMutableTreeNode = DefaultMutableTreeNode("REPOSITORIES")
 
     /**
      * `asksAllowsChildren = true` 让 JTree 按「是否允许有子节点」判定叶子，
@@ -28,17 +29,51 @@ class ActionsTreeModel {
     val swingModel: DefaultTreeModel = DefaultTreeModel(root, true)
 
     /** [loadingWorkflows] 中的 workflow，其「加载更多」行显示为加载中。 */
-    fun apply(workflows: List<WorkflowNode>, loadingWorkflows: Set<String> = emptySet()) {
-        syncChildren(root, workflows.map { WorkflowItem(it.name, it.runs.firstOrNull()?.run?.status) }) { node, index ->
+    fun apply(
+        workflows: List<WorkflowNode>,
+        loadingWorkflows: Set<String> = emptySet(),
+    ) {
+        applyWorkflows(root, workflows, null, loadingWorkflows)
+    }
+
+    fun applyRepositories(
+        repositories: List<RepositoryNode>,
+        loadingWorkflows: Set<String> = emptySet(),
+    ) {
+        syncChildren(root, repositories.map { RepositoryItem(it.repository, it.statusMessage) }) { repositoryNode, index ->
+            val repository = repositories[index]
+            applyWorkflows(repositoryNode, repository.workflows, repository.repository, loadingWorkflows)
+        }
+    }
+
+    private fun applyWorkflows(
+        parent: DefaultMutableTreeNode,
+        workflows: List<WorkflowNode>,
+        repository: RepoCoordinates?,
+        loadingWorkflows: Set<String>,
+    ) {
+        syncChildren(
+            parent,
+            workflows.map {
+                WorkflowItem(
+                    it.name,
+                    it.runs
+                        .firstOrNull()
+                        ?.run
+                        ?.status,
+                )
+            },
+        ) { node, index ->
             val workflow = workflows[index]
             val runItems = workflow.runs.map { RunItem(it.run) }
-            val children = if (workflow.canLoadMore) {
-                runItems + LoadMoreItem(workflow.name, workflow.name in loadingWorkflows)
-            } else {
-                runItems
-            }
+            val loadingKey = loadingKey(repository, workflow.name)
+            val children =
+                if (workflow.canLoadMore) {
+                    runItems + LoadMoreItem(workflow.name, loadingKey in loadingWorkflows, repository)
+                } else {
+                    runItems
+                }
             syncChildren(node, children) { runNode, runIndex ->
-                // 「加载更多」排在所有 run 之后，它没有下一层，下标也超出 runs 的范围。
                 if (runIndex >= workflow.runs.size) return@syncChildren
                 val jobs = workflow.runs[runIndex].jobs.orEmpty()
                 syncChildren(runNode, jobs.map { JobItem(it) }) { jobNode, jobIndex ->
@@ -48,6 +83,20 @@ class ActionsTreeModel {
             }
         }
     }
+
+    fun applyRepositoriesTo(
+        tree: JTree,
+        repositories: List<RepositoryNode>,
+        loadingWorkflows: Set<String> = emptySet(),
+    ) {
+        applyRepositories(repositories, loadingWorkflows)
+        tree.expandPath(TreePath(root))
+    }
+
+    internal fun loadingKey(
+        repository: RepoCoordinates?,
+        workflowName: String,
+    ): String = if (repository == null) workflowName else "$repository:$workflowName"
 
     /**
      * 把数据应用到 [tree] 上。
@@ -60,7 +109,11 @@ class ActionsTreeModel {
      * （早先 `apply` 末尾的 `nodeStructureChanged(root)` 顺带产生过展开 root 的副作用，
      * 但它同时会清空 JTree 的展开态，已被移除；展开 root 的职责因此需要在这里显式承担。）
      */
-    fun applyTo(tree: JTree, workflows: List<WorkflowNode>, loadingWorkflows: Set<String> = emptySet()) {
+    fun applyTo(
+        tree: JTree,
+        workflows: List<WorkflowNode>,
+        loadingWorkflows: Set<String> = emptySet(),
+    ) {
         apply(workflows, loadingWorkflows)
         tree.expandPath(TreePath(root))
     }

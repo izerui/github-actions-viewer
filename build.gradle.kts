@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.github.ghactions"
-version = "0.1.1"
+version = "0.1.2"
 
 repositories {
     // 不用 mavenCentral()：部分网络下 repo1.maven.org 会按 TLS 指纹被阻断——

@@ -16,7 +16,6 @@ import javax.swing.JComponent
  * 而不只是报错——用户看到的永远是「怎么办」，不是「出错了」。
  */
 object EmptyStatePanel {
-
     private val TIME_FORMAT: DateTimeFormatter =
         DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault())
 
@@ -25,10 +24,13 @@ object EmptyStatePanel {
         val text = panel.emptyText
 
         when (state) {
-            ViewState.Loading -> text.text = "正在加载…"
+            ViewState.Loading -> {
+                text.text = "正在加载…"
+            }
 
-            ViewState.NoGitRemote ->
+            ViewState.NoGitRemote -> {
                 text.text = "当前项目没有 GitHub remote"
+            }
 
             ViewState.GhNotInstalled -> {
                 text.text = "未检测到 GitHub CLI"
@@ -52,14 +54,19 @@ object EmptyStatePanel {
                 ) { CopyPasteManager.getInstance().setContents(StringSelection("gh auth login")) }
             }
 
-            is ViewState.RateLimited ->
+            is ViewState.RateLimited -> {
                 text.text = "API 配额已用尽，将于 ${TIME_FORMAT.format(state.resetAt)} 恢复"
+            }
 
-            is ViewState.Error ->
+            is ViewState.Error -> {
                 text.text = "加载失败：${state.message}"
+            }
 
-            is ViewState.Loaded ->
+            is ViewState.Loaded,
+            is ViewState.WorkspaceLoaded,
+            -> {
                 text.text = "没有找到工作流运行记录"
+            }
         }
 
         return panel

@@ -1,6 +1,7 @@
 package com.github.ghactions.ui
 
 import com.github.ghactions.model.Job
+import com.github.ghactions.model.RepoCoordinates
 import com.github.ghactions.model.RunStatus
 import com.github.ghactions.model.Step
 import com.github.ghactions.model.WorkflowRun
@@ -25,19 +26,35 @@ sealed interface TreeItem {
  * workflow 分组。[latestStatus] 是它最近一次运行的状态——折叠着也能一眼看出红绿，
  * 不必展开逐个查看。它不参与 [id]，所以状态变化只会更新节点、不会重建它。
  */
-data class WorkflowItem(val name: String, val latestStatus: RunStatus? = null) : TreeItem {
+data class RepositoryItem(
+    val repository: RepoCoordinates,
+    val statusMessage: String? = null,
+) : TreeItem {
+    override val id: String get() = "repo:$repository"
+    override val label: String get() = statusMessage?.let { "$repository  ·  $it" } ?: repository.toString()
+    override val status: RunStatus? get() = null
+}
+
+data class WorkflowItem(
+    val name: String,
+    val latestStatus: RunStatus? = null,
+) : TreeItem {
     override val id: String get() = "w:$name"
     override val label: String get() = name
     override val status: RunStatus? get() = latestStatus
 }
 
-data class RunItem(val run: WorkflowRun) : TreeItem {
+data class RunItem(
+    val run: WorkflowRun,
+) : TreeItem {
     override val id: String get() = "r:${run.id}"
     override val label: String get() = "#${run.runNumber}"
     override val status: RunStatus get() = run.status
 }
 
-data class JobItem(val job: Job) : TreeItem {
+data class JobItem(
+    val job: Job,
+) : TreeItem {
     override val id: String get() = "j:${job.id}"
     override val label: String get() = job.name
     override val status: RunStatus get() = job.status
@@ -50,14 +67,21 @@ data class JobItem(val job: Job) : TreeItem {
  * [id] 只由 [workflowName] 决定，[loading] 变化因此走的是节点数据更新而非重建，
  * 这一行不会在点击瞬间闪烁。
  */
-data class LoadMoreItem(val workflowName: String, val loading: Boolean) : TreeItem {
+data class LoadMoreItem(
+    val workflowName: String,
+    val loading: Boolean,
+    val repository: RepoCoordinates? = null,
+) : TreeItem {
     override val isLeaf: Boolean get() = true
     override val id: String get() = "more:$workflowName"
     override val label: String get() = if (loading) "加载中…" else "加载更多"
     override val status: RunStatus? get() = null
 }
 
-data class StepItem(val jobId: Long, val step: Step) : TreeItem {
+data class StepItem(
+    val jobId: Long,
+    val step: Step,
+) : TreeItem {
     override val isLeaf: Boolean get() = true
     override val id: String get() = "s:$jobId:${step.number}"
     override val label: String get() = step.name

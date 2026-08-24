@@ -1,22 +1,26 @@
 # GitHub Actions Viewer
 
-IntelliJ IDEA 插件。在侧边栏实时查看当前项目的 GitHub Actions 执行状态，不必切到浏览器。
+IntelliJ IDEA 插件。在侧边栏实时查看当前工作区的 GitHub Actions 执行状态，不必切到浏览器。
 
-```
-WORKFLOWS
-└─ Build and Push Docker Image
-   ├─ ◉ #422  ·  main  ·  2 分钟前
-   │  └─ ◉ build-and-push                    1m 12s
-   │     ├─ ✓ Set up job                        3s
-   │     ├─ ✓ Checkout                          5s
-   │     └─ ◉ Build and push
-   ├─ ✓ #421  ·  main  ·  5 小时前
-   └─ ✗ #420  ·  feat/x  ·  6 小时前
+```text
+REPOSITORIES
+├─ modexai/maas-api
+│  └─ Build and Push Docker Image
+│     ├─ ◉ #422  ·  main  ·  2 分钟前
+│     │  └─ ◉ build-and-push                    1m 12s
+│     │     ├─ ✓ Set up job                        3s
+│     │     ├─ ✓ Checkout                          5s
+│     │     └─ ◉ Build and push
+│     ├─ ✓ #421  ·  main  ·  5 小时前
+│     └─ ✗ #420  ·  feat/x  ·  6 小时前
+└─ izerui/github-actions-viewer
+   └─ CI
 ```
 
 ## 功能
 
-- **四层树**：Workflow → Run → Job → Step，逐层展开
+- **多仓库工作区**：自动发现项目根目录及其直接子目录中的 GitHub 仓库
+- **五层树**：Repository → Workflow → Run → Job → Step，逐层展开
 - **自动刷新**：有构建在跑时 5 秒一刷，全部跑完降到 60 秒，面板收起后完全停止
 - **按需加载**：只有展开的 run 才拉取它的 job 详情，折叠后不再请求
 - **执行耗时**：每个 job 与 step 显示实际耗时
@@ -28,10 +32,10 @@ WORKFLOWS
 ## 前置要求
 
 | 项 | 要求 |
-|---|---|
+| --- | --- |
 | IDE | IntelliJ IDEA 2026.2.x |
 | 认证 | 已安装 [GitHub CLI](https://cli.github.com) 并完成 `gh auth login` |
-| 仓库 | 当前项目的 git remote 指向 `github.com` |
+| 仓库 | 当前项目或工作区子目录的 git remote 指向 `github.com` |
 
 插件不存储任何凭据，每次通过 `gh auth token` 取用，token 仅存在于内存中。
 
@@ -46,10 +50,10 @@ WORKFLOWS
 
 ## 使用
 
-打开任意 GitHub 项目后，点击右侧边栏的 **GitHub Actions** 图标。
+打开任意 GitHub 项目或包含多个 GitHub 仓库的工作区目录后，点击右侧边栏的 **GitHub Actions** 图标。
 
 | 操作 | 方式 |
-|---|---|
+| --- | --- |
 | 展开查看 job / step | 点击展开箭头 |
 | 打开 GitHub 页面 | 悬停行右侧按钮 / 右键菜单 / 工具栏按钮 |
 | 复制运行链接 | 右键菜单 |
@@ -67,7 +71,7 @@ WORKFLOWS
 ## 已知限制
 
 - 仅支持 `github.com`，不支持 GitHub Enterprise
-- 仅显示当前打开项目的仓库，不支持多仓库看板
+- 自动目录发现只扫描工作区根目录及其直接子目录；更深的仓库需要注册为 IDE Git root
 - 默认取最近 15 条运行记录，更早的历史请到 GitHub 网页查看
 - 只读：不支持重跑、取消或手动触发 workflow
 - 不在插件内查看日志——用行内按钮或右键菜单跳转到 GitHub 页面查看
@@ -109,7 +113,7 @@ grep -E "解析到 GitHub 仓库|面板状态" .intellijPlatform/sandbox/*/*/log
 
 ### 结构
 
-```
+```text
 model/   领域模型与状态枚举，无任何依赖
 auth/    通过 gh CLI 取 token
 repo/    git remote 解析（纯函数）+ IDE 适配层

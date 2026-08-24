@@ -1,6 +1,8 @@
 package com.github.ghactions.ui
 
 import com.github.ghactions.model.Job
+import com.github.ghactions.model.RepoCoordinates
+import com.github.ghactions.model.RepositoryNode
 import com.github.ghactions.model.RunNode
 import com.github.ghactions.model.RunStatus
 import com.github.ghactions.model.Step
@@ -18,8 +20,12 @@ import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.TreePath
 
 class ActionsTreeModelTest {
-
-    private fun run(id: Long, number: Int, status: RunStatus, name: String = "CI") = WorkflowRun(
+    private fun run(
+        id: Long,
+        number: Int,
+        status: RunStatus,
+        name: String = "CI",
+    ) = WorkflowRun(
         id = id,
         runNumber = number,
         workflowName = name,
@@ -29,11 +35,64 @@ class ActionsTreeModelTest {
         updatedAt = Instant.EPOCH,
     )
 
-    private fun job(id: Long, status: RunStatus, steps: List<Step> = emptyList()) =
-        Job(id = id, name = "build", status = status, steps = steps)
+    private fun job(
+        id: Long,
+        status: RunStatus,
+        steps: List<Step> = emptyList(),
+    ) = Job(id = id, name = "build", status = status, steps = steps)
 
-    private fun child(parent: DefaultMutableTreeNode, index: Int) =
-        parent.getChildAt(index) as DefaultMutableTreeNode
+    private fun child(
+        parent: DefaultMutableTreeNode,
+        index: Int,
+    ) = parent.getChildAt(index) as DefaultMutableTreeNode
+
+    @Test
+    fun `多个仓库各自显示为顶层节点`() {
+        val model = ActionsTreeModel()
+        val first = RepoCoordinates("modexai", "maas-api")
+        val second = RepoCoordinates("izerui", "github-actions-viewer")
+
+        model.applyRepositories(
+            listOf(
+                RepositoryNode(first, listOf(WorkflowNode("CI", listOf(RunNode(run(1, 10, RunStatus.SUCCESS), null))))),
+                RepositoryNode(second, listOf(WorkflowNode("Build", listOf(RunNode(run(2, 20, RunStatus.SUCCESS), null))))),
+            ),
+        )
+
+        assertEquals(2, model.root.childCount)
+        val firstRepository = child(model.root, 0)
+        val secondRepository = child(model.root, 1)
+        assertEquals(first, (firstRepository.userObject as RepositoryItem).repository)
+        assertEquals(second, (secondRepository.userObject as RepositoryItem).repository)
+        assertEquals("CI", (child(firstRepository, 0).userObject as WorkflowItem).name)
+        assertEquals("Build", (child(secondRepository, 0).userObject as WorkflowItem).name)
+    }
+
+    @Test
+    fun `同名 workflow 的加载状态按仓库隔离`() {
+        val model = ActionsTreeModel()
+        val first = RepoCoordinates("one", "repo")
+        val second = RepoCoordinates("two", "repo")
+        val workflow =
+            WorkflowNode(
+                "CI",
+                listOf(RunNode(run(1, 10, RunStatus.SUCCESS), null)),
+                workflowId = 99,
+                canLoadMore = true,
+            )
+
+        model.applyRepositories(
+            listOf(RepositoryNode(first, listOf(workflow)), RepositoryNode(second, listOf(workflow))),
+            loadingWorkflows = setOf(model.loadingKey(first, "CI")),
+        )
+
+        val firstMore = child(child(child(model.root, 0), 0), 1).userObject as LoadMoreItem
+        val secondMore = child(child(child(model.root, 1), 0), 1).userObject as LoadMoreItem
+        assertTrue(firstMore.loading)
+        assertTrue(!secondMore.loading)
+        assertEquals(first, firstMore.repository)
+        assertEquals(second, secondMore.repository)
+    }
 
     @Test
     fun `构建四层树`() {
@@ -234,9 +293,10 @@ class ActionsTreeModelTest {
         assertTrue(tree.isExpanded(bPath), "前置条件：B 应已展开")
 
         // 模拟 render()：apply 前快照展开态。
-        val expandedPaths = (0 until tree.rowCount)
-            .mapNotNull { tree.getPathForRow(it) }
-            .filter { tree.isExpanded(it) }
+        val expandedPaths =
+            (0 until tree.rowCount)
+                .mapNotNull { tree.getPathForRow(it) }
+                .filter { tree.isExpanded(it) }
 
         // 让 B 换到 index 0（A、B 顺序互换），触发 ActionsTreeModel 的换位分支。
         model.apply(
@@ -297,14 +357,15 @@ class ActionsTreeModelTest {
     @Test
     fun `加载更多的节点在刷新时被复用`() {
         val model = ActionsTreeModel()
-        val workflows = listOf(
-            WorkflowNode(
-                "CI",
-                listOf(RunNode(run(1, 419, RunStatus.IN_PROGRESS), null)),
-                workflowId = 98765,
-                canLoadMore = true,
-            ),
-        )
+        val workflows =
+            listOf(
+                WorkflowNode(
+                    "CI",
+                    listOf(RunNode(run(1, 419, RunStatus.IN_PROGRESS), null)),
+                    workflowId = 98765,
+                    canLoadMore = true,
+                ),
+            )
         model.apply(workflows)
         val moreNode = child(child(model.root, 0), 1)
 
@@ -317,12 +378,13 @@ class ActionsTreeModelTest {
     @Test
     fun `加载中的标记只更新节点数据，不更换节点实例`() {
         val model = ActionsTreeModel()
-        val workflow = WorkflowNode(
-            "CI",
-            listOf(RunNode(run(1, 419, RunStatus.SUCCESS), null)),
-            workflowId = 98765,
-            canLoadMore = true,
-        )
+        val workflow =
+            WorkflowNode(
+                "CI",
+                listOf(RunNode(run(1, 419, RunStatus.SUCCESS), null)),
+                workflowId = 98765,
+                canLoadMore = true,
+            )
         model.apply(listOf(workflow))
         val moreNode = child(child(model.root, 0), 1)
 
