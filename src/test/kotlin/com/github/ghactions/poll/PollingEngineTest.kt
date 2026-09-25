@@ -8,18 +8,24 @@ import com.github.ghactions.auth.CommandOutput
 import com.github.ghactions.auth.CommandRunner
 import com.github.ghactions.auth.GhCliTokenProvider
 import com.github.ghactions.model.RepoCoordinates
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import java.util.concurrent.CyclicBarrier
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -811,6 +817,177 @@ class PollingEngineTest {
                 "上一个仓库的历史记录不该混进新仓库的树里",
             )
         }
+
+    // ---- refreshing 状态 ----
+
+    @Test
+    fun `requestRefresh 设置 refreshing 为 true，拉取完成后恢复为 false`() =
+        runTest {
+            val transport = RecordingTransport({ runsJson("completed", "success") })
+            val engine = engineWith(transport)
+
+            backgroundScope.launch { engine.run() }
+            engine.setVisible(true)
+            runCurrent()
+            advanceUntilIdle()
+
+            assertFalse(engine.refreshing.value, "首轮完成后应恢复为 false")
+
+            engine.requestRefresh()
+            assertTrue(engine.refreshing.value, "requestRefresh 应立即置为 true")
+
+            runCurrent()
+            advanceUntilIdle()
+            assertFalse(engine.refreshing.value, "刷新完成后应恢复为 false")
+        }
+
+    @Test
+    fun `错误状态下 requestRefresh 也能正确设置和清除 refreshing`() =
+        runTest {
+            var returnError = true
+            val transport =
+                RecordingTransport(
+                    { "" },
+                    responder = { url ->
+                        if (returnError) {
+                            HttpResponse(500, "", emptyMap())
+                        } else {
+                            HttpResponse(200, runsJson("completed", "success"), emptyMap())
+                        }
+                    },
+                )
+            val engine = engineWith(transport)
+
+            backgroundScope.launch { engine.run() }
+            engine.setVisible(true)
+            runCurrent()
+            advanceUntilIdle()
+
+            assertInstanceOf(ViewState.Error::class.java, engine.state.value)
+            assertFalse(engine.refreshing.value, "错误后 refreshing 应为 false")
+
+            // 修复网络后刷新
+            returnError = false
+            engine.requestRefresh()
+            assertTrue(engine.refreshing.value, "requestRefresh 后应为 true")
+
+            runCurrent()
+            advanceUntilIdle()
+            assertFalse(engine.refreshing.value, "刷新成功后应恢复为 false")
+            assertInstanceOf(ViewState.Loaded::class.java, engine.state.value)
+        }
+
+    @Test
+    fun `轮询进行中点击刷新，旧轮次 finally 不会清除 refreshing`() {
+        // 真实多线程测试：engine 跑在 IO 线程，requestRefresh 从主线程调用。
+        // 用 latch 精确控制每一步的先后顺序，不依赖 Thread.sleep。
+        val firstPollDone = CountDownLatch(1)
+        val oldPollEntered = CountDownLatch(1)
+        val oldPollGate = CountDownLatch(1)
+        val refreshPollEntered = CountDownLatch(1)
+        val refreshPollGate = CountDownLatch(1)
+        val allDone = CountDownLatch(1)
+        val callCount = AtomicInteger()
+
+        val transport =
+            object : HttpTransport {
+                override fun get(
+                    url: String,
+                    headers: Map<String, String>,
+                ): HttpResponse {
+                    val n = callCount.incrementAndGet()
+                    when (n) {
+                        1 -> {
+                            // 首轮：返回后通知主线程
+                        }
+                        2 -> {
+                            oldPollEntered.countDown()
+                            oldPollGate.await(5, TimeUnit.SECONDS)
+                        }
+                        3 -> {
+                            refreshPollEntered.countDown()
+                            refreshPollGate.await(5, TimeUnit.SECONDS)
+                        }
+                    }
+                    val response = HttpResponse(200, runsJson("completed", "success"), emptyMap())
+                    if (n == 1) firstPollDone.countDown()
+                    if (n == 3) allDone.countDown()
+                    return response
+                }
+            }
+        val engine = engineWith(transport)
+
+        runBlocking {
+            val job = launch(Dispatchers.IO) { engine.run() }
+
+            engine.setVisible(true)
+            assertTrue(firstPollDone.await(5, TimeUnit.SECONDS), "首轮应完成")
+            awaitCondition { !engine.refreshing.value }
+            assertFalse(engine.refreshing.value, "首轮完成后应为 false")
+
+            engine.requestRefresh()
+            assertTrue(oldPollEntered.await(5, TimeUnit.SECONDS), "旧轮询应进入 transport")
+
+            // 旧轮询已阻塞在 transport 里，此时再发一次 requestRefresh
+            engine.requestRefresh()
+            assertTrue(engine.refreshing.value, "用户点击刷新后应为 true")
+
+            // 放行旧轮询——它的 finally 不应清除 refreshing
+            oldPollGate.countDown()
+
+            // 等新轮询进入 transport，说明循环已经走完旧轮次进入了新轮次
+            assertTrue(refreshPollEntered.await(5, TimeUnit.SECONDS), "新轮询应进入 transport")
+            assertTrue(engine.refreshing.value, "旧轮次 finally 不应清除 refreshing，新轮询尚未完成")
+
+            // 放行新轮询
+            refreshPollGate.countDown()
+            assertTrue(allDone.await(5, TimeUnit.SECONDS), "新轮询应完成")
+            awaitCondition { !engine.refreshing.value }
+            assertFalse(engine.refreshing.value, "所有轮次完成后应恢复为 false")
+
+            job.cancel()
+        }
+    }
+
+    @Test
+    fun `两个线程同时 requestRefresh，generation 原子递增 2`() {
+        val transport =
+            RecordingTransport({ runsJson("completed", "success") })
+        val engine = engineWith(transport)
+
+        // setVisible(true) 内部调一次 requestRefresh → generation = 1
+        engine.setVisible(true)
+        val before = engine.refreshGenerationSnapshot
+
+        val barrier = CyclicBarrier(2)
+        val t1 = Thread {
+            barrier.await(5, TimeUnit.SECONDS)
+            engine.requestRefresh()
+        }
+        val t2 = Thread {
+            barrier.await(5, TimeUnit.SECONDS)
+            engine.requestRefresh()
+        }
+        t1.start()
+        t2.start()
+        t1.join(5000)
+        t2.join(5000)
+
+        assertEquals(
+            before + 2,
+            engine.refreshGenerationSnapshot,
+            "两次并发 requestRefresh 应原子递增 2，不能丢失",
+        )
+    }
+
+    /** 带超时等待条件成立，避免 Thread.sleep 在慢 CI 上偶发失败。 */
+    private fun awaitCondition(timeoutMs: Long = 5000, condition: () -> Boolean) {
+        val deadline = System.nanoTime() + timeoutMs * 1_000_000
+        while (!condition()) {
+            if (System.nanoTime() > deadline) break
+            Thread.yield()
+        }
+    }
 
     private companion object {
         const val CI_WORKFLOW_ID = 98765L

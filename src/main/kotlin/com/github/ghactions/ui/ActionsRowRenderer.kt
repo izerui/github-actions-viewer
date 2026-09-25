@@ -3,8 +3,8 @@ package com.github.ghactions.ui
 import com.intellij.icons.AllIcons
 import com.intellij.util.ui.EmptyIcon
 import com.intellij.util.ui.JBUI
-import java.awt.BorderLayout
 import java.awt.Component
+import java.awt.FlowLayout
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JTree
@@ -12,16 +12,17 @@ import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.TreeCellRenderer
 
 /**
- * 整行渲染：左侧是状态图标与文本，右侧是鼠标悬停时出现的「在浏览器中打开」按钮。
+ * 行内渲染：左侧是状态图标与文本，后面紧跟鼠标悬停时出现的「在浏览器中打开」按钮。
  *
  * 之所以需要这层包装：[ActionsTreeCellRenderer] 继承自 SimpleColoredComponent，
- * 而后者只有一个图标槽位，已经被状态图标占用，无法再在右侧放第二个图标。
+ * 而后者只有一个图标槽位，已经被状态图标占用，无法再在文本后放第二个图标。
  *
  * 关键细节：按钮位置**始终占位**，悬停时只切换图标显不显示。否则鼠标划过时行宽
  * 会忽宽忽窄，整棵树跟着横向抖动。
  */
-class ActionsRowRenderer : JPanel(BorderLayout()), TreeCellRenderer {
-
+class ActionsRowRenderer :
+    JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)),
+    TreeCellRenderer {
     private val text = ActionsTreeCellRenderer()
     private val actionIcon = JLabel(EMPTY)
 
@@ -43,8 +44,8 @@ class ActionsRowRenderer : JPanel(BorderLayout()), TreeCellRenderer {
     init {
         isOpaque = false
         actionIcon.border = JBUI.Borders.empty(0, 6)
-        add(text, BorderLayout.CENTER)
-        add(actionIcon, BorderLayout.EAST)
+        add(text)
+        add(actionIcon)
     }
 
     override fun getTreeCellRendererComponent(
@@ -70,8 +71,39 @@ class ActionsRowRenderer : JPanel(BorderLayout()), TreeCellRenderer {
     /** 上一次渲染是否画的是忙碌图标。供测试断言用。 */
     val isShowingBusyIcon: Boolean get() = text.showedBusyIcon
 
-    /** 右侧按钮占据的宽度，供命中判断使用；该行没有按钮时为 0。 */
-    fun actionWidth(): Int = if (actionIcon.isVisible) actionIcon.preferredSize.width else 0
+    /** 按钮在渲染器内的横向起点；图标紧跟在文本组件后面。 */
+    fun actionOffset(): Int = text.preferredSize.width
+
+    /** 横向坐标是否落在指定节点的按钮区域内。点击判断不得依赖 renderer 上一次绘制的行。 */
+    fun isActionAt(
+        tree: JTree,
+        node: DefaultMutableTreeNode,
+        row: Int,
+        horizontalOffset: Int,
+    ): Boolean {
+        getTreeCellRendererComponent(
+            tree,
+            node,
+            tree.isRowSelected(row),
+            tree.isExpanded(row),
+            node.isLeaf,
+            row,
+            tree.hasFocus(),
+        )
+        return isActionAt(horizontalOffset)
+    }
+
+    /** 横向坐标是否落在当前已配置行的按钮区域内。 */
+    fun isActionAt(horizontalOffset: Int): Boolean {
+        val width = actionWidth()
+        return width > 0 && horizontalOffset >= actionOffset() && horizontalOffset < actionOffset() + width
+    }
+
+    /** 图标槽固定宽度，不受当前 renderer 正在表示哪一行影响。 */
+    fun actionSlotWidth(): Int = actionIcon.preferredSize.width
+
+    /** 按钮占据的宽度；当前已配置行没有按钮时为 0。 */
+    fun actionWidth(): Int = if (actionIcon.isVisible) actionSlotWidth() else 0
 
     private companion object {
         val EMPTY: javax.swing.Icon = EmptyIcon.ICON_16

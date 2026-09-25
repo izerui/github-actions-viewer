@@ -9,22 +9,15 @@ import com.github.ghactions.auth.ProcessCommandRunner
 import com.github.ghactions.model.RepoCoordinates
 import com.github.ghactions.model.RepositoryNode
 import com.github.ghactions.repo.IdeGitRepoProvider
-import com.github.ghactions.repo.WorkspaceRepository
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Semaphore
 
 /** Project service that coordinates one polling engine per workspace repository. */
@@ -42,118 +35,45 @@ class ActionsPollingService(
             etags = etags,
         )
 
-    private val expanded: MutableSet<Long> = ConcurrentHashMap.newKeySet()
-    private val engines = ConcurrentHashMap<RepoCoordinates, EngineHolder>()
-    private val repositorySnapshots = ConcurrentHashMap<RepoCoordinates, WorkspaceRepository>()
-    private val engineStates = ConcurrentHashMap<RepoCoordinates, ViewState>()
-    private val lastLoadedStates = ConcurrentHashMap<RepoCoordinates, ViewState.Loaded>()
-    private val repositoryWake = Channel<Unit>(Channel.CONFLATED)
+    private val coordinator = PollingCoordinator(client, etags, scope, repoProvider::repositories)
 
-    private val _state = MutableStateFlow<ViewState>(ViewState.Loading)
-    val state: StateFlow<ViewState> = _state.asStateFlow()
-
-    @Volatile private var visible = false
-
-    @Volatile private var branchFilterEnabled = false
-    private var repositoryMissCount = 0
+    val state: StateFlow<ViewState> get() = coordinator.state
 
     init {
-        scope.launch(Dispatchers.IO) {
-            while (true) {
-                syncRepositories(repoProvider.repositories())
-                val scanInterval =
-                    when {
-                        repositorySnapshots.isEmpty() &&
-                            repositoryMissCount <= PollingSchedule.REPO_GRACE_ROUNDS -> PollingSchedule.REPO_PROBE
+        coordinator.start()
+    }
 
-                        visible -> PollingSchedule.ACTIVE
+    fun requestRefresh() = coordinator.requestRefresh()
 
-                        else -> PollingSchedule.IDLE
-                    }
-                withTimeoutOrNull(scanInterval) { repositoryWake.receive() }
+    fun setBranchFilter(enabled: Boolean) = coordinator.setBranchFilter(enabled)
+
+    fun setVisible(value: Boolean) = coordinator.setVisible(value)
+
+    fun setExpanded(runId: Long, isExpanded: Boolean) = coordinator.onExpansionChanged(runId, isExpanded)
+
+    fun loadMore(
+        repository: RepoCoordinates,
+        workflowName: String,
+        onDone: () -> Unit,
+    ) {
+        coordinator.loadMore(repository, workflowName) {
+            withContext(Dispatchers.EDT) { onDone() }
+        }
+    }
+
+    fun observe(onState: (ViewState) -> Unit) {
+        scope.launch(Dispatchers.EDT) {
+            state.collect { value ->
+                LOG.info("面板状态 -> ${value.javaClass.simpleName}")
+                onState(value)
             }
         }
     }
 
-    private fun syncRepositories(repositories: List<WorkspaceRepository>) {
-        val current = repositories.distinctBy { it.coordinates }.associateBy { it.coordinates }
-        repositorySnapshots.clear()
-        repositorySnapshots.putAll(current)
-
-        val removed = engines.keys - current.keys
-        removed.forEach { coordinates ->
-            engines.remove(coordinates)?.jobs?.forEach(Job::cancel)
-            engineStates.remove(coordinates)
-            lastLoadedStates.remove(coordinates)
+    fun observeRefreshing(onRefreshing: (Boolean) -> Unit) {
+        scope.launch(Dispatchers.EDT) {
+            coordinator.refreshStatus.collect { status -> onRefreshing(status.refreshing) }
         }
-
-        current.forEach { (coordinates, repository) ->
-            engines.computeIfAbsent(coordinates) {
-                createEngine(repository).also { holder ->
-                    holder.engine.setVisible(visible)
-                    holder.engine.setBranchFilter(branchFilterEnabled)
-                }
-            }
-        }
-
-        if (current.isEmpty()) {
-            repositoryMissCount++
-            _state.value =
-                if (repositoryMissCount > PollingSchedule.REPO_GRACE_ROUNDS) {
-                    ViewState.NoGitRemote
-                } else {
-                    ViewState.Loading
-                }
-        } else {
-            repositoryMissCount = 0
-            publishAggregatedState()
-        }
-        logRepositories(current.keys)
-    }
-
-    private fun createEngine(repository: WorkspaceRepository): EngineHolder {
-        val coordinates = repository.coordinates
-        val engine =
-            PollingEngine(
-                client = client,
-                etags = etags,
-                repoProvider = { coordinates },
-                branchProvider = { repositorySnapshots[coordinates]?.branch },
-                expandedRuns = { expanded.toSet() },
-            )
-        val runJob = scope.launch(Dispatchers.IO) { engine.run() }
-        val stateJob =
-            scope.launch {
-                engine.state.collect { state ->
-                    engineStates[coordinates] = state
-                    if (state is ViewState.Loaded) lastLoadedStates[coordinates] = state
-                    publishAggregatedState()
-                }
-            }
-        return EngineHolder(engine, listOf(runJob, stateJob))
-    }
-
-    @Synchronized
-    private fun publishAggregatedState() {
-        val coordinates = repositorySnapshots.keys.sortedBy(RepoCoordinates::toString)
-        if (coordinates.isEmpty()) return
-        _state.value = aggregateWorkspaceState(coordinates, engineStates, lastLoadedStates)
-    }
-
-    fun requestRefresh() {
-        repositoryWake.trySend(Unit)
-        engines.values.forEach { it.engine.requestRefresh() }
-    }
-
-    fun setBranchFilter(enabled: Boolean) {
-        branchFilterEnabled = enabled
-        engines.values.forEach { it.engine.setBranchFilter(enabled) }
-    }
-
-    fun setVisible(value: Boolean) {
-        visible = value
-        repositoryWake.trySend(Unit)
-        engines.values.forEach { it.engine.setVisible(value) }
     }
 
     private fun limitedTransport(delegate: HttpTransport): HttpTransport {
@@ -184,52 +104,6 @@ class ActionsPollingService(
         return if (configured) java.net.ProxySelector.getDefault() else null
     }
 
-    private fun logRepositories(resolved: Set<RepoCoordinates>) {
-        if (resolved != lastLoggedRepositories) {
-            lastLoggedRepositories = resolved
-            val description = resolved.joinToString().ifEmpty { "无" }
-            LOG.info("解析到 GitHub 仓库: $description")
-        }
-    }
-
-    private var lastLoggedRepositories: Set<RepoCoordinates> = emptySet()
-
-    fun loadMore(
-        repository: RepoCoordinates,
-        workflowName: String,
-        onDone: () -> Unit,
-    ) {
-        scope.launch(Dispatchers.IO) {
-            try {
-                engines[repository]?.engine?.loadMore(workflowName)
-            } finally {
-                withContext(Dispatchers.EDT) { onDone() }
-            }
-        }
-    }
-
-    fun setExpanded(
-        runId: Long,
-        isExpanded: Boolean,
-    ) {
-        val changed = if (isExpanded) expanded.add(runId) else expanded.remove(runId)
-        if (changed && isExpanded) engines.values.forEach { it.engine.onExpansionChanged() }
-    }
-
-    fun observe(onState: (ViewState) -> Unit) {
-        scope.launch(Dispatchers.EDT) {
-            state.collect { value ->
-                LOG.info("面板状态 -> ${value.javaClass.simpleName}")
-                onState(value)
-            }
-        }
-    }
-
-    private data class EngineHolder(
-        val engine: PollingEngine,
-        val jobs: List<Job>,
-    )
-
     companion object {
         private const val MAX_CONCURRENT_REQUESTS = 4
         private val LOG =
@@ -253,6 +127,14 @@ internal fun aggregateWorkspaceState(
 
     if (effectiveLoaded.isNotEmpty()) {
         val loadedByRepository = effectiveLoaded.toMap()
+        val errors = coordinates.mapNotNull { repository ->
+            val state = states[repository]
+            when {
+                state is ViewState.Error -> "${repository}: ${state.message}"
+                state is ViewState.RateLimited -> "${repository}: API 配额已用尽"
+                else -> null
+            }
+        }
         return ViewState.WorkspaceLoaded(
             repositories =
                 coordinates.map { repository ->
@@ -261,6 +143,7 @@ internal fun aggregateWorkspaceState(
                 },
             lastUpdated = effectiveLoaded.maxOf { it.second.lastUpdated },
             degraded = effectiveLoaded.any { it.second.degraded },
+            refreshError = errors.firstOrNull(),
         )
     }
 
@@ -271,6 +154,9 @@ internal fun aggregateWorkspaceState(
         ?: currentStates.firstOrNull { it is ViewState.Error }
         ?: ViewState.Loading
 }
+
+internal fun aggregateRefreshing(engines: Iterable<PollingEngine>): Boolean =
+    engines.any { it.refreshing.value }
 
 private fun repositoryStatusMessage(state: ViewState?): String? =
     when (state) {

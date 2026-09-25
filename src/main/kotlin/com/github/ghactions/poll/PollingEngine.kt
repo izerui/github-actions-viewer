@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -39,6 +40,23 @@ class PollingEngine(
 
     private val _state = MutableStateFlow<ViewState>(ViewState.Loading)
     val state: StateFlow<ViewState> = _state.asStateFlow()
+
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
+    /**
+     * 刷新请求的代次。每次 [requestRefresh] 原子递增，[run] 循环在一轮 pollOnce
+     * 开始前快照，结束后只有代次未变才清除 [_refreshing]。
+     * 这样即使上一轮 pollOnce 还在跑，用户点击刷新也不会被它的 finally 提前清除。
+     *
+     * 必须是 AtomicLong：EDT 的手动刷新可能与仓库同步线程的 setVisible(true)
+     * 并发调用 requestRefresh，普通 `@Volatile var` 的 read-increment-write
+     * 不是原子操作，代次可能丢失。
+     */
+    private val refreshGeneration = AtomicLong()
+
+    /** 当前代次快照，仅供测试断言原子递增。 */
+    internal val refreshGenerationSnapshot: Long get() = refreshGeneration.get()
 
     private val visible = MutableStateFlow(false)
     private val wake = Channel<Unit>(Channel.CONFLATED)
@@ -83,6 +101,8 @@ class PollingEngine(
 
     /** 强制刷新：丢弃 ETag 并立即唤醒循环。 */
     fun requestRefresh() {
+        refreshGeneration.incrementAndGet()
+        _refreshing.value = true
         etags.clear()
         wake.trySend(Unit)
     }
@@ -107,7 +127,12 @@ class PollingEngine(
             // 丢弃积压的唤醒信号，否则刚拉完就会被自己触发的信号立即重拉
             wake.tryReceive()
 
-            val interval = pollOnce() ?: continue
+            val gen = refreshGeneration.get()
+            val interval = try {
+                pollOnce() ?: continue
+            } finally {
+                if (refreshGeneration.get() == gen) _refreshing.value = false
+            }
             withTimeoutOrNull(interval) { wake.receive() }
         }
     }

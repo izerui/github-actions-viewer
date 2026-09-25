@@ -35,5 +35,6 @@ sealed interface ViewState {
         val repositories: List<RepositoryNode>,
         val lastUpdated: Instant,
         val degraded: Boolean,
+        val refreshError: String? = null,
     ) : ViewState
 }

@@ -38,6 +38,35 @@ import javax.swing.tree.TreeSelectionModel
 private const val CARD_TREE = "tree"
 private const val CARD_EMPTY = "empty"
 
+internal fun createTreeActionMouseListener(
+    tree: JTree,
+    rowRenderer: ActionsRowRenderer,
+    openInBrowser: (String) -> Unit,
+    requestLoadMore: (LoadMoreItem) -> Unit,
+): MouseAdapter =
+    object : MouseAdapter() {
+        override fun mouseClicked(e: MouseEvent) {
+            val row = tree.getRowForLocation(e.x, e.y).takeIf { it >= 0 } ?: return
+            val node = tree.getPathForRow(row)?.lastPathComponent as? DefaultMutableTreeNode ?: return
+
+            // 「加载更多」整行都是按钮：这一行没有别的可点内容，
+            // 不必像 run 行那样把命中区限定在图标上。
+            val more = node.userObject as? LoadMoreItem
+            if (more != null) {
+                if (!more.loading) requestLoadMore(more)
+                e.consume()
+                return
+            }
+
+            val bounds = tree.getRowBounds(row) ?: return
+            if (!rowRenderer.isActionAt(tree, node, row, e.x - bounds.x)) return
+
+            val url = (node.userObject as? RunItem)?.run?.htmlUrl?.ifEmpty { null } ?: return
+            openInBrowser(url)
+            e.consume()
+        }
+    }
+
 class ActionsTreePanel(
     private val project: Project,
 ) : JBPanel<ActionsTreePanel>(BorderLayout()) {
@@ -53,12 +82,25 @@ class ActionsTreePanel(
 
     private var branchFilterEnabled = false
 
+    @Volatile
+    private var isRefreshing = false
+    private var lastRefreshError: String? = null
+
     val titleActions: List<AnAction> =
         listOf(
             object : AnAction("刷新", "立即刷新", AllIcons.Actions.Refresh) {
                 override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
-                override fun actionPerformed(e: AnActionEvent) = service.requestRefresh()
+                override fun update(e: AnActionEvent) {
+                    e.presentation.icon =
+                        if (isRefreshing) AnimatedIcon.Default.INSTANCE else AllIcons.Actions.Refresh
+                    e.presentation.text = if (isRefreshing) "正在刷新…" else "刷新"
+                }
+
+                override fun actionPerformed(e: AnActionEvent) {
+                    onRefreshingChanged(true)
+                    service.requestRefresh()
+                }
             },
             object : ToggleAction("只看当前分支", "只显示当前分支的运行记录", AllIcons.Vcs.Branch) {
                 override fun getActionUpdateThread() = ActionUpdateThread.EDT
@@ -126,6 +168,7 @@ class ActionsTreePanel(
         // "Nothing to show"，而不是我们的「正在加载…」。
         render(service.state.value)
         service.observe(::render)
+        service.observeRefreshing(::onRefreshingChanged)
     }
 
     /** 「在浏览器中打开」。标题栏与右键菜单共用同一份定义。 */
@@ -173,31 +216,12 @@ class ActionsTreePanel(
         }.addTo(tree)
 
         tree.addMouseListener(
-            object : MouseAdapter() {
-                override fun mouseClicked(e: MouseEvent) {
-                    val row = tree.getRowForLocation(e.x, e.y).takeIf { it >= 0 } ?: return
-                    val node = tree.getPathForRow(row)?.lastPathComponent as? DefaultMutableTreeNode ?: return
-
-                    // 「加载更多」整行都是按钮：这一行没有别的可点内容，
-                    // 不必像 run 行那样把命中区限定在右端的图标上。
-                    val more = node.userObject as? LoadMoreItem
-                    if (more != null) {
-                        if (!more.loading) requestLoadMore(more)
-                        e.consume()
-                        return
-                    }
-
-                    val bounds = tree.getRowBounds(row) ?: return
-                    val actionWidth = rowRenderer.actionWidth()
-                    if (actionWidth <= 0) return
-                    // 命中判断：按钮贴在该行内容的最右端
-                    if (e.x < bounds.x + bounds.width - actionWidth) return
-
-                    val url = (node.userObject as? RunItem)?.run?.htmlUrl?.ifEmpty { null } ?: return
-                    openInBrowser(url)
-                    e.consume()
-                }
-            },
+            createTreeActionMouseListener(
+                tree = tree,
+                rowRenderer = rowRenderer,
+                openInBrowser = ::openInBrowser,
+                requestLoadMore = ::requestLoadMore,
+            ),
         )
     }
 
@@ -300,7 +324,53 @@ class ActionsTreePanel(
         tree.repaint()
     }
 
+    private fun onRefreshingChanged(refreshing: Boolean) {
+        isRefreshing = refreshing
+        if (refreshing) {
+            lastRefreshError = null
+        }
+        resolveRefreshRender(refreshing, lastViewState, service.state.value)?.let(::render)
+        updateStatusLabel()
+    }
+
+    private var lastViewState: ViewState? = null
+
+    private fun updateStatusLabel() {
+        val state = lastViewState
+        if (state is ViewState.WorkspaceLoaded && state.repositories.isNotEmpty()) {
+            statusLabel.text =
+                when {
+                    isRefreshing -> {
+                        "  正在刷新…"
+                    }
+
+                    state.refreshError != null -> {
+                        "  刷新失败：${state.refreshError}"
+                    }
+
+                    state.degraded -> {
+                        val ago =
+                            DateFormatUtil.formatBetweenDates(
+                                state.lastUpdated.toEpochMilli(),
+                                System.currentTimeMillis(),
+                            )
+                        "  最后更新于 $ago · API 配额偏低，已降低刷新频率"
+                    }
+
+                    else -> {
+                        val ago =
+                            DateFormatUtil.formatBetweenDates(
+                                state.lastUpdated.toEpochMilli(),
+                                System.currentTimeMillis(),
+                            )
+                        "  最后更新于 $ago"
+                    }
+                }
+        }
+    }
+
     private fun render(state: ViewState) {
+        lastViewState = state
         if (state is ViewState.WorkspaceLoaded && state.repositories.isNotEmpty()) {
             val currentRepositories = state.repositories.mapTo(HashSet()) { it.repository }
             autoExpandedRepositories.retainAll(currentRepositories)
@@ -328,13 +398,7 @@ class ActionsTreePanel(
                     .toSet()
             if (pendingRuns.removeAll(arrived)) applyLoadingIndicator()
             cards.show(content, CARD_TREE)
-            val ago = DateFormatUtil.formatBetweenDates(state.lastUpdated.toEpochMilli(), System.currentTimeMillis())
-            statusLabel.text =
-                if (state.degraded) {
-                    "  最后更新于 $ago · API 配额偏低，已降低刷新频率"
-                } else {
-                    "  最后更新于 $ago"
-                }
+            updateStatusLabel()
         } else {
             autoExpandedRepositories.clear()
             lastRenderedRepositories = null
@@ -347,3 +411,21 @@ class ActionsTreePanel(
         }
     }
 }
+
+/**
+ * 刷新状态变化时决定需要 render 的 ViewState。返回 null 表示不需要 render。
+ *
+ * 开始刷新时：非 WorkspaceLoaded 状态（错误、未登录等）切到 Loading，让用户看到加载中。
+ * 刷新结束时：无条件用 service 的最新状态重新 render，因为 StateFlow 对同值不会再次发射，
+ * 如果不主动 render，上面 render(Loading) 造成的 UI 状态就回不去了。
+ */
+internal fun resolveRefreshRender(
+    refreshing: Boolean,
+    lastViewState: ViewState?,
+    serviceCurrentState: ViewState,
+): ViewState? =
+    when {
+        refreshing && lastViewState !is ViewState.WorkspaceLoaded -> ViewState.Loading
+        !refreshing -> serviceCurrentState
+        else -> null
+    }
